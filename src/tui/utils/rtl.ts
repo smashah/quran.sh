@@ -126,16 +126,12 @@ export function wrapAndReverse(text: string, width?: number): string {
 }
 
 /**
- * Measure the visual width of a string.
- * Combining marks (zero-width) are not counted.
+ * Measure the visual width of a string in terminal columns.
+ * Combining marks and zero-width characters are not counted.
+ * This is the single source of truth for width calculation.
  */
 function visualWidth(str: string): number {
-  let w = 0;
-  for (const ch of str) {
-    const code = ch.codePointAt(0)!;
-    if (!isCombiningMark(code)) w += 1;
-  }
-  return w;
+  return getVisualWidth(str);
 }
 
 /**
@@ -323,7 +319,7 @@ export function renderArabicVerse(
     result.push(chars[i]!);
     if (
       i < chars.length - 1 &&
-      !isCombiningMark(chars[i + 1]!.codePointAt(0)!) &&
+      !isZeroWidth(chars[i + 1]!.codePointAt(0)!) &&
       chars[i] !== " "
     ) {
       result.push(spacer);
@@ -337,27 +333,80 @@ export function renderArabicVerse(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function getVisualWidth(text: string): number {
+/**
+ * Compute the visual width of text in terminal columns.
+ *
+ * Correctly handles:
+ * - Arabic combining marks (tashkeel/diacritics) — zero width
+ * - General combining marks (U+0300–036F) — zero width
+ * - Zero-width joiners and non-joiners (U+200C, U+200D) — zero width
+ * - BiDi control characters (U+200E–200F, U+202A–202E, U+2066–2069) — zero width
+ * - Soft hyphens (U+00AD) — zero width
+ * - Arabic tatweel/kashida (U+0640) — width 1
+ *
+ * Exported so that reader.tsx can compute alignment padding accurately.
+ */
+export function getVisualWidth(text: string): number {
   let width = 0;
   for (const char of text) {
     const code = char.codePointAt(0)!;
-    if (isCombiningMark(code)) continue;
+    if (isZeroWidth(code)) continue;
     width += 1;
   }
   return width;
 }
 
+/**
+ * Whether a codepoint occupies zero terminal columns.
+ * Includes combining marks and invisible formatting characters.
+ */
+export function isZeroWidth(code: number): boolean {
+  return isCombiningMark(code) || isInvisibleFormat(code);
+}
+
+/**
+ * Whether a codepoint is a combining mark (rendered on the preceding base character).
+ *
+ * Covers all combining marks found in the Uthmani Quran text from quran-json:
+ * - U+064B–065F: Arabic tashkeel (fatha, kasra, damma, shadda, sukun, etc.)
+ * - U+0670: Superscript alef
+ * - U+06D6–06DC: Quranic annotation signs (small high ligatures, stop signs)
+ * - U+06DF–06E4: Small high characters (rounded zero, meem, etc.)
+ * - U+06E7–06E8: Small high yeh/noon
+ * - U+06EA–06ED: Small low/high signs
+ * - U+0610–061A: Quranic signs above (not in quran-json but safe to include)
+ * - U+0300–036F: General combining diacriticals
+ * - U+08D3–08FF: Extended Arabic combining marks
+ * - U+FE20–FE2F: Combining half marks
+ */
 function isCombiningMark(code: number): boolean {
   return (
     (code >= 0x0300 && code <= 0x036f) ||
     (code >= 0x0610 && code <= 0x061a) ||
     (code >= 0x064b && code <= 0x065f) ||
-    (code >= 0x0670 && code <= 0x0670) ||
+    (code === 0x0670) ||
     (code >= 0x06d6 && code <= 0x06dc) ||
     (code >= 0x06df && code <= 0x06e4) ||
     (code >= 0x06e7 && code <= 0x06e8) ||
     (code >= 0x06ea && code <= 0x06ed) ||
     (code >= 0x08d3 && code <= 0x08ff) ||
     (code >= 0xfe20 && code <= 0xfe2f)
+  );
+}
+
+/**
+ * Invisible formatting characters that occupy zero terminal columns.
+ */
+function isInvisibleFormat(code: number): boolean {
+  return (
+    code === 0x00ad ||                         // Soft hyphen
+    code === 0x200b ||                         // Zero-width space
+    code === 0x200c ||                         // Zero-width non-joiner
+    code === 0x200d ||                         // Zero-width joiner
+    code === 0x200e || code === 0x200f ||       // LRM / RLM
+    (code >= 0x202a && code <= 0x202e) ||       // LRE, RLE, PDF, LRO, RLO
+    code === 0x2060 ||                         // Word joiner
+    (code >= 0x2066 && code <= 0x2069) ||       // LRI, RLI, FSI, PDI
+    code === 0xfeff                            // BOM / ZWNBSP
   );
 }

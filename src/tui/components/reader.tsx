@@ -5,7 +5,7 @@ import { getSurah } from "../../data/quran";
 import type { VerseRef } from "../../data/quran";
 import { useTheme } from "../theme";
 import type { FocusablePane, ArabicAlign, ArabicWidth, ArabicFlow } from "../app";
-import { renderArabicVerse, processArabicText, isRtlLanguage } from "../utils/rtl";
+import { renderArabicVerse, processArabicText, isRtlLanguage, getVisualWidth } from "../utils/rtl";
 import { ImageReader } from "./image-reader";
 
 export interface ReaderProps {
@@ -123,10 +123,19 @@ export function Reader(props: ReaderProps) {
     // Center the verse boxes in the scrollbox when width is constrained
     const containerAlign = isRtlPane && arabicWidth !== "100%" ? "center" : textAlign;
 
-    // Compute available columns for line-aware reverse.
-    // Account for sidebar (~30 cols), borders (2), padding (4%).
+    // Compute available columns for manual line wrapping.
+    // The reader pane lives inside a flexbox layout. Estimate its actual width
+    // by starting from terminal width and subtracting known chrome:
+    //   - sidebar: ~25% of termCols when visible (but we don't know here)
+    //   - panel: ~25% when visible (same)
+    //   - borders: 2 cols per visible pane
+    //   - padding: paddingLeft + paddingRight on the box (2+2=4)
+    // Since we can't query actual layout width from Yoga at render time,
+    // we use a conservative estimate. The scrollbox will clip any overflow
+    // anyway, so slightly too-wide is better than too-narrow (wastes space).
     const paneWidthFraction = arabicWidth === "60%" ? 0.6 : arabicWidth === "80%" ? 0.8 : 1;
-    const availableCols = Math.max(20, Math.floor(termCols * 0.7 * paneWidthFraction) - 6);
+    const chromeOverhead = 8; // borders (2) + padding (4) + safety margin (2)
+    const availableCols = Math.max(20, Math.floor(termCols * paneWidthFraction) - chromeOverhead);
 
     // Continuous flow mode for Arabic: join all verses into one text block
     if (isArabic && arabicFlow === "continuous") {
@@ -221,12 +230,10 @@ export function Reader(props: ReaderProps) {
               flexDirection="column"
               paddingBottom={1}
               paddingLeft={isRtlPane ? 2 : 0}
-              marginLeft={isRtlPane && (textAlign === "center" || textAlign === "flex-end" )  ? "auto" : "0%"}
-              marginRight={isRtlPane && (textAlign === "center" || textAlign === "flex-start" ) ? "auto" : "0%"}
               paddingRight={isRtlPane ? 2 : 0}
+              width="100%"
               maxWidth={isRtlPane ? arabicWidth : "100%"}
               alignItems={isRtlPane ? textAlign : "flex-start"}
-              justifyContent={isRtlPane ? textAlign : "flex-start"}
               onMouseDown={() => {
                 if (props.onVerseSelect) props.onVerseSelect(v.id);
               }}
