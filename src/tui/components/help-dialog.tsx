@@ -14,6 +14,7 @@ export function HelpDialog(props: HelpDialogProps) {
     { key: "\u2191/\u2193 j/k", desc: "Navigate surahs or verses" },
     { key: "Enter", desc: "Select surah (in Sidebar)" },
     { key: "b", desc: "Toggle bookmark (in Reader)" },
+    { key: "c", desc: "Copy current ayah image to clipboard" },
     { key: "a", desc: "Toggle Arabic pane" },
     { key: "t", desc: "Toggle Translation pane" },
     { key: "r", desc: "Toggle Transliteration pane" },

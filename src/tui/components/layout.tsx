@@ -75,6 +75,26 @@ export function Layout(props: LayoutProps) {
         )}
       </box>
 
+      {/* NC-style keybinding legend */}
+      <box height={1} width="100%" backgroundColor={theme.colors.background} flexDirection="row" overflow="hidden">
+        {([
+          ["Tab", "Focus"],
+          ["/",   "Search"],
+          ["^F",  "Fuzzy"],
+          ["b",   "Mark"],
+          ["c",   "Copy img"],
+          ["s",   "Side"],
+          ["m",   "Mode"],
+          ["?",   "Help"],
+          ["q",   "Quit"],
+        ] as [string, string][]).map(([key, label]) => (
+          <box key={key} flexDirection="row">
+            <text backgroundColor={theme.colors.highlight} color={theme.colors.background}>{` ${key} `}</text>
+            <text backgroundColor={theme.colors.statusBar} color={theme.colors.text}>{`${label} `}</text>
+          </box>
+        ))}
+      </box>
+
       {/* Status bar — dynasty name + era + mode */}
       <box height={1} width="100%" backgroundColor={theme.colors.statusBar} flexDirection="row" justifyContent="space-between">
         <text color={theme.colors.secondary}>

@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useKeyboard } from "@opentui/react";
-import { getSurah, TOTAL_SURAHS } from "../../data/quran";
+import { getSurah, TOTAL_SURAHS, search } from "../../data/quran";
 import { useTheme } from "../theme";
 
 export interface SurahListProps {
@@ -38,14 +38,35 @@ export function SurahList(props: SurahListProps) {
 
   const filteredOptions = useMemo(() => {
     const query = searchQuery.toLowerCase();
-    if (!query) return allOptions;
+    const rawQuery = searchQuery.trim();
+    if (!rawQuery) return allOptions;
 
-    return allOptions.filter(
+    // Filter by surah name / description / number
+    const byName = allOptions.filter(
       (opt) =>
         opt.name.toLowerCase().includes(query) ||
         opt.description.toLowerCase().includes(query) ||
         opt.value.toString().includes(query)
     );
+
+    // Search verse content (Arabic + translation) for surahs not already matched
+    const nameMatchIds = new Set(byName.map((o) => o.value));
+    const verseHits = search(rawQuery);
+    const surahCounts = new Map<number, number>();
+    for (const v of verseHits) {
+      if (!nameMatchIds.has(v.surahId)) {
+        surahCounts.set(v.surahId, (surahCounts.get(v.surahId) ?? 0) + 1);
+      }
+    }
+
+    const byVerse = allOptions
+      .filter((o) => surahCounts.has(o.value))
+      .map((o) => ({
+        ...o,
+        description: `${o.description}  (${surahCounts.get(o.value)} ayah match${surahCounts.get(o.value)! > 1 ? "es" : ""})`,
+      }));
+
+    return [...byName, ...byVerse];
   }, [searchQuery, allOptions]);
 
   const [selectedIndex, setSelectedIndex] = useState(
