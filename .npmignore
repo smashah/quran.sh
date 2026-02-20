@@ -28,7 +28,6 @@ AGENTS.md
 .gitignore
 
 # Data
-migrations/
 node_modules/
 
 # Dev tooling

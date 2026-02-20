@@ -18,8 +18,32 @@ const xdgDataHome = process.env["XDG_DATA_HOME"] ?? join(homedir(), ".local", "s
 const APP_DATA_DIR = join(xdgDataHome, "quran.sh");
 const DEFAULT_DB_PATH = join(APP_DATA_DIR, "quran.db");
 
-/** Resolve the migrations directory relative to this file */
-const MIGRATIONS_DIR = resolve(import.meta.dir, "..", "..", "migrations");
+/**
+ * Resolve the migrations directory by walking up from this file until we find
+ * package.json (the package root), then appending "migrations/".
+ *
+ * This works for both layouts:
+ *   - Development: src/data/db.ts  → walk up to find package.json → ./migrations/
+ *   - Bundled:     dist/index.js   → walk up to find package.json → ./migrations/
+ *
+ * The previous approach (resolve(import.meta.dir, "..", "..", "migrations"))
+ * only worked from src/data/ depth and broke when running from dist/.
+ */
+function findMigrationsDir(): string {
+  let dir = import.meta.dir;
+  for (let i = 0; i < 5; i++) {
+    if (existsSync(join(dir, "package.json"))) {
+      return join(dir, "migrations");
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break; // filesystem root
+    dir = parent;
+  }
+  // Fallback to the old behaviour
+  return resolve(import.meta.dir, "..", "..", "migrations");
+}
+
+const MIGRATIONS_DIR = findMigrationsDir();
 
 // ---------------------------------------------------------------------------
 // Helpers
