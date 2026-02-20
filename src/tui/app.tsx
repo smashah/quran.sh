@@ -17,6 +17,7 @@ import { reindex } from "../data/fuzzy-search";
 import { CommandPalette } from "./components/command-palette";
 import { RtlCalibrationDialog } from "./components/rtl-calibration-dialog";
 import { setRtlStrategy, getRtlStrategy, type RtlStrategy } from "./utils/rtl";
+import { copyAyahImage } from "./utils/clipboard";
 import { ImageWarningDialog } from "./components/image-warning-dialog";
 import type { CommandItem } from "./components/command-palette";
 import { toggleBookmark, getBookmarkedAyahs, getAllBookmarks } from "../data/bookmarks";
@@ -297,6 +298,18 @@ function AppContent() {
         } catch {
           /* DB may not be available */
         }
+      },
+    },
+    {
+      key: "c",
+      label: "Copy Ayah Image",
+      description: "Copy current verse image to clipboard (surahquran.com)",
+      action: () => {
+        const s = stateRef.current;
+        showFlash("Fetching ayah image…");
+        copyAyahImage(s.selectedSurahId, s.currentVerseId)
+          .then(() => showFlash(`Copied ${s.selectedSurahId}:${s.currentVerseId} image ✓`))
+          .catch((e: Error) => showFlash(`Copy failed: ${e.message}`));
       },
     },
     {
@@ -736,6 +749,13 @@ function AppContent() {
         } catch {
           // DB may not be available
         }
+      }
+      if (str === 'c') {
+        showFlash("Fetching ayah image…");
+        copyAyahImage(s.selectedSurahId, s.currentVerseId)
+          .then(() => showFlash(`Copied ${s.selectedSurahId}:${s.currentVerseId} image ✓`))
+          .catch((e: Error) => showFlash(`Copy failed: ${e.message}`));
+        return;
       }
       if (str === 'h') {
         setShowHelp(true);

@@ -164,6 +164,22 @@ function resolveNameToId(name: string): number | null {
 }
 
 // ---------------------------------------------------------------------------
+// Arabic text normalization
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip Arabic diacritics (harakat) and normalize alef variants so that
+ * a plain query like "الله" matches diacriticized text like "ٱللَّهِ".
+ */
+function normalizeArabic(text: string): string {
+  return text
+    // Remove diacritics: tatweel, harakat, superscript alef, etc.
+    .replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "")
+    // Normalize alef variants (أ إ آ ٱ ٲ ٳ) → bare alef ا
+    .replace(/[\u0622\u0623\u0625\u0671\u0672\u0673]/g, "\u0627");
+}
+
+// ---------------------------------------------------------------------------
 // Monolithic English data (kept ONLY for search)
 // ---------------------------------------------------------------------------
 
@@ -319,7 +335,7 @@ export function search(query: string): VerseRef[] {
 
   for (const ch of chapters) {
     for (const v of ch.verses) {
-      if (v.translation.toLowerCase().includes(trimmed)) {
+      if (v.translation.toLowerCase().includes(trimmed) || normalizeArabic(v.text).includes(normalizeArabic(query.trim()))) {
         results.push(rawToVerseRef(ch, v));
       }
     }
