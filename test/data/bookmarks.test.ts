@@ -34,11 +34,7 @@ function cleanDb(): void {
   try {
     const { openDatabase } = require("../../src/data/db");
     const db = openDatabase();
-    try {
-      db.exec("DELETE FROM bookmarks");
-    } finally {
-      db.close();
-    }
+    db.exec("DELETE FROM bookmarks");
   } catch {
     // If DB doesn't exist yet, that's fine
   }

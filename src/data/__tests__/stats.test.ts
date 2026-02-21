@@ -1,5 +1,4 @@
-import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import { Database } from "bun:sqlite";
+import { test, expect, describe, beforeEach, afterAll } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { unlinkSync, existsSync } from "node:fs";
@@ -7,8 +6,7 @@ import { unlinkSync, existsSync } from "node:fs";
 // We test via the data layer directly with a temp DB
 const TEST_DB_PATH = join(tmpdir(), `quran_stats_test_${Date.now()}.db`);
 
-// Patch openDatabase to use our test path
-import { openDatabase } from "../db";
+import { openDatabase, closeDatabase } from "../db";
 import { getPeriodStats } from "../stats";
 
 function seedDatabase() {
@@ -34,18 +32,18 @@ function seedDatabase() {
 
     // Last month: 1 verse from surah 3
     stmt.run(3, 1, "3:1", lastMonth);
-
-    db.close();
 }
 
 describe("stats data layer", () => {
     beforeEach(() => {
-        // Ensure fresh test DB
+        // Ensure fresh test DB — close cached instance first
+        closeDatabase(TEST_DB_PATH);
         if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
         seedDatabase();
     });
 
-    afterEach(() => {
+    afterAll(() => {
+        closeDatabase(TEST_DB_PATH);
         if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
     });
 
@@ -65,12 +63,8 @@ describe("stats data layer", () => {
 
     test("getPeriodStats returns zero stats when no data", () => {
         // Clean the DB
-        const db = openDatabase();
-        try {
-            db.exec("DELETE FROM reading_log");
-        } finally {
-            db.close();
-        }
+        const db = openDatabase(TEST_DB_PATH);
+        db.exec("DELETE FROM reading_log");
         const stats = getPeriodStats("all");
         expect(stats.versesRead).toBe(0);
         expect(stats.uniqueVerses).toBe(0);

@@ -112,4 +112,16 @@ export function openDatabase(dbPath: string = DEFAULT_DB_PATH): Database {
   return db;
 }
 
+/**
+ * Close a cached database and evict it from the singleton cache.
+ * Useful for tests that need a fresh database between runs.
+ */
+export function closeDatabase(dbPath: string = DEFAULT_DB_PATH): void {
+  const cached = dbCache.get(dbPath);
+  if (cached) {
+    cached.close();
+    dbCache.delete(dbPath);
+  }
+}
+
 export { DEFAULT_DB_PATH, APP_DATA_DIR, MIGRATIONS_DIR };
