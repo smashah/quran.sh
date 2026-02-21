@@ -152,9 +152,19 @@ Examples:
   quran streak             Show current streak`);
 }
 
+import { openDatabase } from "./data/db.ts";
+
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0];
+
+  // Ensure DB is setup and migrations applied before executing any command
+  try {
+    openDatabase();
+  } catch (error) {
+    console.error("Failed to initialize database:", error);
+    process.exit(1);
+  }
 
   if (!command) {
     // Launch TUI

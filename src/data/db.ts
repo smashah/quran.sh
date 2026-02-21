@@ -18,8 +18,12 @@ const xdgDataHome = process.env["XDG_DATA_HOME"] ?? join(homedir(), ".local", "s
 const APP_DATA_DIR = join(xdgDataHome, "quran.sh");
 const DEFAULT_DB_PATH = join(APP_DATA_DIR, "quran.db");
 
-/** Resolve the migrations directory relative to this file */
-const MIGRATIONS_DIR = resolve(import.meta.dir, "..", "..", "migrations");
+/** Resolve the migrations directory */
+let MIGRATIONS_DIR = resolve(import.meta.dir, "..", "..", "migrations");
+if (!existsSync(MIGRATIONS_DIR)) {
+  // In production (dist/index.js), import.meta.dir is dist/
+  MIGRATIONS_DIR = resolve(import.meta.dir, "..", "migrations");
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -36,17 +40,40 @@ function ensureDir(dir: string): void {
  * Files must be named with a numeric prefix (e.g. `001_init.sql`).
  */
 function runMigrations(db: Database): void {
-  if (!existsSync(MIGRATIONS_DIR)) return;
+  console.log(`[DB] Checking for migrations in: ${MIGRATIONS_DIR}`);
+
+  if (!existsSync(MIGRATIONS_DIR)) {
+    console.warn(`[DB] Migrations directory not found at: ${MIGRATIONS_DIR}`);
+    return;
+  }
 
   const files = readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith(".sql"))
     .sort();
 
+  if (files.length === 0) {
+    console.log(`[DB] No migration files found in ${MIGRATIONS_DIR}`);
+    return;
+  }
+
   for (const file of files) {
-    const sql = readFileSync(join(MIGRATIONS_DIR, file), "utf-8");
-    db.exec(sql);
+    console.log(`[DB] Running migration: ${file}`);
+    try {
+      const sql = readFileSync(join(MIGRATIONS_DIR, file), "utf-8");
+      db.exec(sql);
+      console.log(`[DB] Successfully ran ${file}`);
+    } catch (error) {
+      console.error(`[DB] Error running migration ${file}:`, error);
+      throw error;
+    }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Singleton cache — one Database instance per path
+// ---------------------------------------------------------------------------
+
+const dbCache = new Map<string, Database>();
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -55,11 +82,19 @@ function runMigrations(db: Database): void {
 /**
  * Open (or create) the quran.sh SQLite database.
  *
+ * Returns a cached instance if the same path was already opened, so
+ * migrations only run once regardless of how many modules import this.
+ *
  * @param dbPath - Override path for testing. Defaults to XDG data dir.
  * @returns A configured `Database` instance with WAL mode enabled and
  *          migrations applied.
  */
 export function openDatabase(dbPath: string = DEFAULT_DB_PATH): Database {
+  const cached = dbCache.get(dbPath);
+  if (cached) return cached;
+
+  console.log(`[DB] Opening database at: ${dbPath}`);
+
   // Ensure parent directory exists
   ensureDir(dirname(dbPath));
 
@@ -73,6 +108,7 @@ export function openDatabase(dbPath: string = DEFAULT_DB_PATH): Database {
   // Run schema migrations
   runMigrations(db);
 
+  dbCache.set(dbPath, db);
   return db;
 }
 

@@ -41,7 +41,6 @@ export function addReflection(
       "INSERT OR REPLACE INTO reflections (surah, ayah, verse_ref, note) VALUES (?, ?, ?, ?)",
     ).run(surahId, ayahId, verseRef, note);
   } finally {
-    db.close();
   }
 }
 
@@ -73,7 +72,6 @@ export function getReflection(
       updatedAt: row["updated_at"] as string,
     };
   } finally {
-    db.close();
   }
 }
 
@@ -92,7 +90,6 @@ export function updateReflection(
       "UPDATE reflections SET note = ?, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) WHERE surah = ? AND ayah = ?",
     ).run(note, surahId, ayahId);
   } finally {
-    db.close();
   }
 }
 
@@ -111,7 +108,6 @@ export function removeReflection(
       ayahId,
     );
   } finally {
-    db.close();
   }
 }
 
@@ -137,7 +133,6 @@ export function getAllReflections(dbPath?: string): Reflection[] {
       updatedAt: row["updated_at"] as string,
     }));
   } finally {
-    db.close();
   }
 }
 
@@ -166,6 +161,5 @@ export function getReflectionsForSurah(
       updatedAt: row["updated_at"] as string,
     }));
   } finally {
-    db.close();
   }
 }

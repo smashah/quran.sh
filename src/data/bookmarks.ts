@@ -40,7 +40,6 @@ export function addBookmark(
       "INSERT OR IGNORE INTO bookmarks (surah, ayah, verse_ref, label) VALUES (?, ?, ?, ?)",
     ).run(surahId, ayahId, verseRef, label ?? null);
   } finally {
-    db.close();
   }
 }
 
@@ -55,7 +54,6 @@ export function removeBookmark(surahId: number, ayahId: number): void {
       ayahId,
     );
   } finally {
-    db.close();
   }
 }
 
@@ -86,7 +84,6 @@ export function getBookmark(
       createdAt: row["created_at"] as string,
     };
   } finally {
-    db.close();
   }
 }
 
@@ -130,7 +127,6 @@ export function getAllBookmarks(): Bookmark[] {
       createdAt: row["created_at"] as string,
     }));
   } finally {
-    db.close();
   }
 }
 
@@ -147,6 +143,5 @@ export function getBookmarkedAyahs(surahId: number): Set<number> {
 
     return new Set(rows.map((row) => row["ayah"] as number));
   } finally {
-    db.close();
   }
 }

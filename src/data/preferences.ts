@@ -23,7 +23,6 @@ export function getPreference(key: string): string | null {
 
     return row ? (row["value"] as string) : null;
   } finally {
-    db.close();
   }
 }
 
@@ -39,6 +38,5 @@ export function setPreference(key: string, value: string): void {
       value,
     );
   } finally {
-    db.close();
   }
 }

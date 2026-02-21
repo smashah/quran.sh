@@ -36,7 +36,6 @@ function insertLogEntry(
       "INSERT INTO reading_log (surah, ayah, verse_ref) VALUES (?, ?, ?)",
     ).run(surah, ayah, verseRef);
   } finally {
-    db.close();
   }
 }
 
@@ -104,7 +103,6 @@ export function deleteReadingLog(period: ResetPeriod, sessionStart?: string): Lo
       message: `✓ Reset ${count} reading log entries for "${RESET_LABELS[period]}".`,
     };
   } finally {
-    db.close();
   }
 }
 
@@ -139,7 +137,6 @@ export function isSurahLoggedToday(surahId: number, totalVerses: number): boolea
     ).get(surahId) as { cnt: number } | null;
     return (row?.cnt ?? 0) >= totalVerses;
   } finally {
-    db.close();
   }
 }
 
@@ -171,7 +168,6 @@ export function logSurah(surah: Surah): LogResult {
 
     transaction();
   } finally {
-    db.close();
   }
 
   return {
@@ -204,7 +200,6 @@ export function getCompletedSurahIds(): Set<number> {
     }
     return completed;
   } finally {
-    db.close();
   }
 }
 
@@ -219,6 +214,5 @@ export function getReadVerseIds(surahId: number): Set<number> {
     ).all(surahId) as { ayah: number }[];
     return new Set(rows.map((r) => r.ayah));
   } finally {
-    db.close();
   }
 }

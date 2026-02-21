@@ -43,7 +43,6 @@ export function setCue(
       "INSERT OR REPLACE INTO cues (slot, surah, ayah, verse_ref) VALUES (?, ?, ?, ?)",
     ).run(slot, surahId, ayahId, verseRef);
   } finally {
-    db.close();
   }
 }
 
@@ -68,7 +67,6 @@ export function getCue(slot: number, dbPath?: string): Cue | null {
       setAt: row["set_at"] as string,
     };
   } finally {
-    db.close();
   }
 }
 
@@ -90,7 +88,6 @@ export function getAllCues(dbPath?: string): Cue[] {
       setAt: row["set_at"] as string,
     }));
   } finally {
-    db.close();
   }
 }
 
@@ -102,6 +99,5 @@ export function clearCue(slot: number, dbPath?: string): void {
   try {
     db.query("DELETE FROM cues WHERE slot = ?").run(slot);
   } finally {
-    db.close();
   }
 }

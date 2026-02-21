@@ -98,6 +98,5 @@ export function getPeriodStats(period: StatsPeriod, sessionStart?: string): Peri
             surahsCompleted,
         };
     } finally {
-        db.close();
     }
 }

@@ -104,6 +104,5 @@ export function getReadingStats(): StreakStats {
       activityGrid
     };
   } finally {
-    db.close();
   }
 }
