@@ -23,6 +23,9 @@
 - **Braille Image Mode** — Optional ayah calligraphy rendering from remote PNGs, cached in memory for the session
 - **Verse Flow Modes** — Stacked, inline, or continuous flow — press `F` to cycle
 - **Arabic Layout** — Configurable alignment (`A`) and width (`W`)
+- **Immersive Reader** — Focus, Learn, Recite, and Memorise modes with adaptive layouts and optional spatial Mushaf-line illumination
+- **Terminal Scrollback** — A split-footer reader commits completed ayat to normal, selectable terminal history
+- **Lazy by Construction** — Optional translations, QUL packs, audio, Tilawa, and WebGPU load only after the command that needs them
 
 ### 🎨 Design
 - **12 Dynasty Themes** — Mamluk, Ottoman, Safavid, Andalusian, Maghribi, Madinah, Umayyad, Abbasid, Fatimid, Seljuk, Mughal — each with unique ornaments, borders and color palettes inspired by Islamic manuscript illumination
@@ -37,6 +40,8 @@
 - **Activity Panel** — Toggleable right panel listing all bookmarks, cues, and reflections
 - **Full-Text Search** — Search across all translations with `/`
 - **Command Palette** — Quick access to all commands with `Ctrl+P`
+- **QUL Resource Packs** — Import verified JSON or SQLite translations, tafsir, morphology, topics, recitation timing, and Mushaf layouts without scraping or signing in from quran.sh
+- **Local Recitation Following** — Optional Tilawa recognition follows committed verse matches; tentative candidates never move the reader
 
 ### 📊 Progress Tracking
 - **Reading Mode** — Toggle between browsing (no tracking) and reading (tracks every verse) with `m`
@@ -86,9 +91,31 @@ quran log 2:255
 
 # View reading streak
 quran streak
+
+# Launch the focused next-generation reading experience
+quran immersive
+
+# Keep completed ayat in native terminal scrollback
+quran stream
+
+# Start with every optional subsystem disabled
+quran safe
+
+# Inspect capabilities, packs, cache sizes, licenses, and privacy
+quran doctor
+
+# Manage user-downloaded QUL-compatible packs
+quran resources list
+quran resources import manifest.json resource.json
+
+# Manage the optional local Tilawa model
+quran models status
+quran models install official --yes
 ```
 
 ### TUI Keyboard Shortcuts
+
+The immersive reader uses `1`–`4` for Focus/Learn/Recite/Memorise, `w` for installed QUL study data, `p` for attributed recitation playback, `v` for local follow-my-recitation, `g` for the experimental OpenTUI Three Mushaf-line scene, `M` for reduced motion, and `j`/`k` for verse navigation.
 
 #### Navigation
 
@@ -132,6 +159,9 @@ quran streak
 | `A` | Cycle Arabic alignment |
 | `W` | Cycle Arabic width |
 | `F` | Cycle verse flow mode |
+| `mouse wheel` / `+` / `-` | Zoom the focused Braille image |
+| `mouse drag` / arrow keys / `0` | Pan or reset the focused Braille image |
+| `C` | Clear bounded image caches |
 
 #### General
 
@@ -149,6 +179,8 @@ quran streak
 - 10 languages: Bengali, English, Spanish, French, Indonesian, Russian, Swedish, Turkish, Urdu, Chinese
 
 The bundled Quran text, translations, bookmarks, and reading history work offline. Image mode and image clipboard copying fetch ayah PNGs from `surahquran.com`; the app asks for confirmation before enabling image mode and keeps fetched images only in memory.
+
+QUL and Tilawa assets are never bundled or downloaded at startup. QUL imports come from files the user obtained with permission and retain dataset-specific attribution; Tilawa microphone audio stays local and is not retained by default. See [Optional resources](docs/optional-resources.md) for manifests, licensing, model installation, removal, and privacy.
 
 ## Development
 
@@ -172,6 +204,10 @@ bun test
 # Type-check, test, and build both distributions
 bun run check
 
+# Verify lazy chunk boundaries and record startup/RSS budgets
+bun run verify:lazy
+bun run perf
+
 # Build the npm/JavaScript entry
 bun run build
 # → outputs ./dist/index.js
@@ -184,6 +220,8 @@ bun run build:binary
 ## Recording Demos
 
 Demo recording scripts are in `demos/`. To record a TUI demo:
+
+The v0.7 next-generation recording is reproducible with `vhs demos/next-generation.tape`; it writes both `demos/quran-next-generation.mp4` and `.gif`.
 
 ```bash
 # 1. Start a tmux session
@@ -210,6 +248,9 @@ under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); see
 
 - Built with [Bun](https://bun.sh)
 - UI powered by [OpenTUI](https://github.com/anomalyco/opentui)
+- Optional spatial cells powered by the released [OpenTUI Three](https://github.com/anomalyco/opentui/tree/v0.4.5/packages/three)
+- Optional local recitation recognition powered by [Tilawa](https://github.com/yazinsai/tilawa)
+- Optional content-pack integration for [Quranic Universal Library](https://qul.tarteel.ai/resources)
 - Arabic shaping via [arabic-reshaper](https://github.com/a-patel/arabic-reshaper)
 - Data from [quran-json](https://github.com/risan/quran-json)
 

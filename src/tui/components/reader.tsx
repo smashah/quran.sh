@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useRef } from "react";
+import { lazy, Suspense, useMemo, useEffect, useRef } from "react";
 import { TextAttributes } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/react";
 import { getSurah } from "../../data/quran";
@@ -6,7 +6,13 @@ import type { VerseRef } from "../../data/quran";
 import { useTheme } from "../theme";
 import type { FocusablePane, ArabicAlign, ArabicWidth, ArabicFlow } from "../app";
 import { renderArabicVerse, processArabicText, isRtlLanguage } from "../utils/rtl";
-import { ImageReader } from "./image-reader";
+
+// React.lazy does not evaluate image-reader (or pngjs) until the user has
+// explicitly enabled the image pane.
+const LazyImageReader = lazy(async () => {
+  const module = await import("./image-reader.tsx");
+  return { default: module.ImageReader };
+});
 
 export interface ReaderProps {
   surahId: number;
@@ -319,7 +325,9 @@ export function Reader(props: ReaderProps) {
                   titleAlignment="left"
                 >
                   {showArabicImage ? (
-                    <ImageReader surahId={surah.id} verseId={props.currentVerseId ?? 1} focused={isArabicFocused} />
+                    <Suspense fallback={<text fg={theme.colors.muted}>Activating image viewer…</text>}>
+                      <LazyImageReader surahId={surah.id} verseId={props.currentVerseId ?? 1} focused={isArabicFocused} />
+                    </Suspense>
                   ) : (
                     renderVerseList("arabic", isArabicFocused)
                   )}

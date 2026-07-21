@@ -4,6 +4,7 @@ import {
   getVerse,
   search,
   TOTAL_SURAHS,
+  loadLanguage,
 } from "../../src/data/quran";
 import type { Surah, VerseRef } from "../../src/data/quran";
 
@@ -264,7 +265,8 @@ describe("getVerse", () => {
 // ---------------------------------------------------------------------------
 
   describe("search", () => {
-    it("searches the requested translation language", () => {
+    it("searches the requested translation language", async () => {
+      await loadLanguage("fr");
       const results = search("Au nom d'Allah", "fr");
       expect(results.some((result) => result.reference === "1:1")).toBe(true);
       expect(results[0]?.translation).toContain("Au nom d'Allah");

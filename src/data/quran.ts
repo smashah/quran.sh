@@ -5,17 +5,8 @@
  * All verse numbering is 1-based to match Islamic scholarly convention.
  * Supports multiple languages and transliteration.
  */
-import quranBn from "quran-json/dist/quran_bn.json";
 import quranEn from "quran-json/dist/quran_en.json";
-import quranEs from "quran-json/dist/quran_es.json";
-import quranFr from "quran-json/dist/quran_fr.json";
-import quranId from "quran-json/dist/quran_id.json";
-import quranRu from "quran-json/dist/quran_ru.json";
-import quranSv from "quran-json/dist/quran_sv.json";
-import quranTr from "quran-json/dist/quran_tr.json";
 import quranTransliteration from "quran-json/dist/quran_transliteration.json";
-import quranUr from "quran-json/dist/quran_ur.json";
-import quranZh from "quran-json/dist/quran_zh.json";
 
 // ---------------------------------------------------------------------------
 // Raw JSON types (matching quran-json chapter file structure)
@@ -115,18 +106,41 @@ export interface VerseRef {
 // Data loading (lazy, cached)
 // ---------------------------------------------------------------------------
 
-const DATASETS: Record<Language, RawChapter[]> = {
-  bn: quranBn as RawChapter[],
+const DATASETS: Partial<Record<Language, RawChapter[]>> = {
   en: quranEn as RawChapter[],
-  es: quranEs as RawChapter[],
-  fr: quranFr as RawChapter[],
-  id: quranId as RawChapter[],
-  ru: quranRu as RawChapter[],
-  sv: quranSv as RawChapter[],
-  tr: quranTr as RawChapter[],
-  ur: quranUr as RawChapter[],
-  zh: quranZh as RawChapter[],
 };
+
+const languageLoaders: Record<Exclude<Language, "en">, () => Promise<{ default: unknown }>> = {
+  bn: () => import("quran-json/dist/quran_bn.json"),
+  es: () => import("quran-json/dist/quran_es.json"),
+  fr: () => import("quran-json/dist/quran_fr.json"),
+  id: () => import("quran-json/dist/quran_id.json"),
+  ru: () => import("quran-json/dist/quran_ru.json"),
+  sv: () => import("quran-json/dist/quran_sv.json"),
+  tr: () => import("quran-json/dist/quran_tr.json"),
+  ur: () => import("quran-json/dist/quran_ur.json"),
+  zh: () => import("quran-json/dist/quran_zh.json"),
+};
+const loadingLanguages = new Map<Language, Promise<void>>();
+
+/** Load one optional translation chunk after explicit selection. */
+export function loadLanguage(language: string): Promise<void> {
+  const resolved = resolveLanguage(language);
+  if (DATASETS[resolved]) return Promise.resolve();
+  const pending = loadingLanguages.get(resolved);
+  if (pending) return pending;
+  const loader = resolved === "en" ? null : languageLoaders[resolved];
+  if (!loader) return Promise.resolve();
+  const loading = loader().then((module) => {
+    DATASETS[resolved] = module.default as RawChapter[];
+  }).finally(() => loadingLanguages.delete(resolved));
+  loadingLanguages.set(resolved, loading);
+  return loading;
+}
+
+export function isLanguageLoaded(language: string): boolean {
+  return DATASETS[resolveLanguage(language)] !== undefined;
+}
 
 const TRANSLITERATIONS = quranTransliteration as RawTransliterationChapter[];
 
@@ -143,7 +157,7 @@ let _indexByName: Map<string, number> | null = null;
 function loadChapterIndex(): void {
   if (_indexByName !== null) return;
   _indexByName = new Map<string, number>();
-  for (const entry of DATASETS.en) {
+  for (const entry of DATASETS.en!) {
     _indexByName.set(entry.transliteration.toLowerCase(), entry.id);
   }
 }
@@ -157,7 +171,7 @@ function resolveLanguage(language: string): Language {
  * Uses the per-chapter files at quran-json/dist/chapters/{lang}/{id}.json.
  */
 function loadChapter(language: string, id: number): RawChapter | null {
-  return DATASETS[resolveLanguage(language)][id - 1] ?? null;
+  return DATASETS[resolveLanguage(language)]?.[id - 1] ?? null;
 }
 
 /**
@@ -190,7 +204,7 @@ function normalizeArabic(text: string): string {
 // ---------------------------------------------------------------------------
 
 function loadSearchData(language: string): RawChapter[] {
-  return DATASETS[resolveLanguage(language)];
+  return DATASETS[resolveLanguage(language)] ?? [];
 }
 
 // ---------------------------------------------------------------------------

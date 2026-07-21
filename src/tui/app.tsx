@@ -25,7 +25,7 @@ import { setCue, getCue, getAllCues } from "../data/cues";
 import type { Cue } from "../data/cues";
 import { getAllReflections, addReflection, getReflection } from "../data/reflections";
 import type { Reflection } from "../data/reflections";
-import { getSurah, search, LANGUAGES } from "../data/quran";
+import { getSurah, search, LANGUAGES, isLanguageLoaded, loadLanguage } from "../data/quran";
 import { logVerse } from "../data/log";
 import { logSurah, deleteReadingLog, getCompletedSurahIds, getReadVerseIds } from "../data/log";
 import type { ResetPeriod } from "../data/log";
@@ -117,7 +117,7 @@ function AppContent() {
   const [showArabicImage, setShowArabicImage] = useState(savedPrefs.showArabicImage);
   const [showTranslation, setShowTranslation] = useState(savedPrefs.showTranslation);
   const [showTransliteration, setShowTransliteration] = useState(savedPrefs.showTransliteration);
-  const [language, setLanguage] = useState(savedPrefs.language);
+  const [language, setLanguage] = useState(isLanguageLoaded(savedPrefs.language) ? savedPrefs.language : "en");
   const [flashMessage, setFlashMessage] = useState("");
   const [readingMode, setReadingMode] = useState(savedPrefs.readingMode);
   const [showMarkSurahDialog, setShowMarkSurahDialog] = useState(false);
@@ -131,6 +131,11 @@ function AppContent() {
   const [readVerseIds, setReadVerseIds] = useState<Set<number>>(new Set());
   const [hasSeenImageWarning, setHasSeenImageWarning] = useState(savedPrefs.hasSeenImageWarning);
   const [showImageWarningDialog, setShowImageWarningDialog] = useState(false);
+
+  useEffect(() => {
+    if (savedPrefs.language === "en") return;
+    void loadLanguage(savedPrefs.language).then(() => setLanguage(savedPrefs.language));
+  }, []);
 
   // Persist settings whenever they change
   useEffect(() => {
@@ -262,7 +267,10 @@ function AppContent() {
     },
     "cycle-language": () => {
       const languageIndex = LANGUAGES.indexOf(stateRef.current.language as (typeof LANGUAGES)[number]);
-      if (languageIndex !== -1) setLanguage(LANGUAGES[(languageIndex + 1) % LANGUAGES.length]!);
+      if (languageIndex !== -1) {
+        const next = LANGUAGES[(languageIndex + 1) % LANGUAGES.length]!;
+        void loadLanguage(next).then(() => setLanguage(next)).catch(() => showFlash(`Could not load ${next.toUpperCase()} translation`));
+      }
     },
     "toggle-reading": () => setReadingMode((enabled) => {
       const next = !enabled;

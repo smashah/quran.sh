@@ -1,18 +1,26 @@
 const IMAGE_CACHE_LIMIT = 24;
+const IMAGE_CACHE_BYTES = 16 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const imageCache = new Map<string, Buffer>();
+let imageCacheBytes = 0;
 
 export function ayahImageUrl(surahId: number, verseId: number): string {
   return `https://surahquran.com/img/ayah/${surahId}-${verseId}.png`;
 }
 
 function remember(url: string, buffer: Buffer): void {
+  const previous = imageCache.get(url);
+  if (previous) imageCacheBytes -= previous.byteLength;
   imageCache.delete(url);
   imageCache.set(url, buffer);
+  imageCacheBytes += buffer.byteLength;
 
-  if (imageCache.size > IMAGE_CACHE_LIMIT) {
+  while (imageCache.size > IMAGE_CACHE_LIMIT || imageCacheBytes > IMAGE_CACHE_BYTES) {
     const oldest = imageCache.keys().next().value;
-    if (oldest) imageCache.delete(oldest);
+    if (!oldest) break;
+    const removed = imageCache.get(oldest);
+    if (removed) imageCacheBytes -= removed.byteLength;
+    imageCache.delete(oldest);
   }
 }
 
@@ -56,4 +64,9 @@ export async function fetchAyahImage(
 
 export function clearAyahImageCache(): void {
   imageCache.clear();
+  imageCacheBytes = 0;
+}
+
+export function ayahImageCacheStats(): { items: number; bytes: number; byteLimit: number } {
+  return { items: imageCache.size, bytes: imageCacheBytes, byteLimit: IMAGE_CACHE_BYTES };
 }

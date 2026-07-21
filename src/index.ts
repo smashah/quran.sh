@@ -1,129 +1,6 @@
 #!/usr/bin/env bun
-/**
- * quran.sh — CLI entry point.
- */
-import { getSurah, getVerse, search, TOTAL_SURAHS } from "./data/quran.ts";
-import type { Surah, VerseRef } from "./data/quran.ts";
-import { logVerse, logSurah } from "./data/log.ts";
-import { getReadingStats } from "./data/streaks.ts";
-import { createRoot, createElement } from "@opentui/react";
-import { ConsolePosition, createCliRenderer } from "@opentui/core";
 
-// ---------------------------------------------------------------------------
-// Output formatting
-// ---------------------------------------------------------------------------
-
-function formatSurah(surah: Surah): string {
-  const header = `Surah ${surah.id}: ${surah.transliteration} (${surah.translation})`;
-  const verses = surah.verses
-    .map((v) => v.translation)
-    .join("\n");
-  return `${header}\n\n${verses}`;
-}
-
-function formatVerse(verse: VerseRef): string {
-  return `[${verse.reference}] ${verse.translation}`;
-}
-
-// ---------------------------------------------------------------------------
-// Reference parsing & dispatch
-// ---------------------------------------------------------------------------
-
-function handleRead(ref: string): { ok: boolean; output: string } {
-  if (ref.includes(":")) {
-    const verse = getVerse(ref);
-    if (!verse) {
-      return {
-        ok: false,
-        output: `Error: Verse "${ref}" not found. Use format "surah:verse" (e.g. 1:1, 2:255).`,
-      };
-    }
-    return { ok: true, output: formatVerse(verse) };
-  }
-
-  if (/^\d+$/.test(ref)) {
-    const id = Number(ref);
-    const surah = getSurah(id);
-    if (!surah) {
-      return {
-        ok: false,
-        output: `Error: Surah ${id} not found. Valid range: 1-${TOTAL_SURAHS}.`,
-      };
-    }
-    return { ok: true, output: formatSurah(surah) };
-  }
-
-  const surah = getSurah(ref);
-  if (!surah) {
-    return {
-      ok: false,
-      output: `Error: Surah "${ref}" not found. Use transliterated name (e.g. al-fatihah, al-baqarah).`,
-    };
-  }
-  return { ok: true, output: formatSurah(surah) };
-}
-
-function handleLog(ref: string): { ok: boolean; output: string } {
-  if (ref.includes(":")) {
-    const result = logVerse(ref);
-    return { ok: result.ok, output: result.message };
-  }
-
-  if (/^\d+$/.test(ref)) {
-    const id = Number(ref);
-    const surah = getSurah(id);
-    if (!surah) {
-      return {
-        ok: false,
-        output: `Error: Surah ${id} not found. Valid range: 1-${TOTAL_SURAHS}.`,
-      };
-    }
-    const result = logSurah(surah);
-    return { ok: result.ok, output: result.message };
-  }
-
-  const surah = getSurah(ref);
-  if (!surah) {
-    return {
-      ok: false,
-      output: `Error: Surah "${ref}" not found. Use transliterated name (e.g. al-fatihah, al-baqarah).`,
-    };
-  }
-  const result = logSurah(surah);
-  return { ok: result.ok, output: result.message };
-}
-
-function handleStreak(): void {
-  const stats = getReadingStats();
-  console.log("📖 Reading Streak");
-  console.log("──────────────────");
-  console.log(`Current Streak: ${stats.currentStreak} days`);
-  console.log(`Longest Streak: ${stats.longestStreak} days`);
-  console.log(`Total Reading Days: ${stats.totalDays} days`);
-}
-
-function handleSearch(query: string): { ok: boolean; output: string } {
-  if (!query || query.trim().length === 0) {
-    return {
-      ok: false,
-      output: 'Error: Missing search query. Usage: quran.sh search <query>',
-    };
-  }
-
-  const results = search(query);
-  if (results.length === 0) {
-    return {
-      ok: false,
-      output: `No results found for "${query}".`,
-    };
-  }
-
-  const lines = results.map((r) => `[${r.reference}] ${r.translation}`);
-  return {
-    ok: true,
-    output: `Found ${results.length} result(s) for "${query}":\n\n${lines.join("\n")}`,
-  };
-}
+const TOTAL_SURAHS = 114;
 
 function showUsage(): void {
   console.log(`quran.sh — Read the Quran from your terminal
@@ -133,15 +10,21 @@ Usage:
 
 Commands:
   (none)           Launch interactive TUI reader
-  read   <ref>    Read a surah or verse
-  log    <ref>    Log a surah or verse as read
-  search <query>  Search verse translations
-  streak          Show reading stats and streaks
+  read   <ref>     Read a surah or verse
+  log    <ref>     Log a surah or verse as read
+  search <query>   Search verse translations
+  streak           Show reading stats and streaks
+  resources [...]  Manage optional QUL-compatible content packs
+  immersive        Launch the focused next-generation reader
+  stream           Read with completed ayat in terminal scrollback
+  safe              Launch the classic text-only reader
+  doctor            Inspect capabilities, packs, caches, and licenses
+  models [...]      Install, verify, or remove optional Tilawa assets
 
 Reference formats:
-  1              Full surah by number (1-${TOTAL_SURAHS})
-  1:1            Single verse (surah:verse)
-  al-fatihah     Full surah by name
+  1                Full surah by number (1-${TOTAL_SURAHS})
+  1:1              Single verse (surah:verse)
+  al-fatihah       Full surah by name
 
 Examples:
   quran                    Launch TUI
@@ -151,32 +34,12 @@ Examples:
   quran streak             Show current streak`);
 }
 
-import { openDatabase } from "./data/db.ts";
-
-async function launchTui(): Promise<void> {
-  openDatabase();
-  const [{ default: App }, renderer] = await Promise.all([
-    import("./tui/app.tsx"),
-    createCliRenderer({
-      consoleOptions: {
-        position: ConsolePosition.BOTTOM,
-        sizePercent: 30,
-        colorInfo: "#00FFFF",
-        colorWarn: "#FFFF00",
-        colorError: "#FF0000",
-        startInDebugMode: false,
-      },
-    }),
-  ]);
-
-  createRoot(renderer).render(createElement(App));
-}
-
 async function main(): Promise<number | undefined> {
   const args = process.argv.slice(2);
   const command = args[0];
 
   if (!command) {
+    const { launchTui } = await import("./tui/launch.ts");
     await launchTui();
     return;
   }
@@ -187,21 +50,34 @@ async function main(): Promise<number | undefined> {
   }
 
   if (command === "streak") {
-    openDatabase();
-    handleStreak();
-    return 0;
+    const { runStreak } = await import("./cli/commands.ts");
+    return runStreak();
   }
 
   if (command === "search") {
-    const query = args.slice(1).join(" ");
-    const result = handleSearch(query);
-    if (result.ok) {
-      console.log(result.output);
-      return 0;
-    } else {
-      console.error(result.output);
-      return 1;
-    }
+    const { runSearch } = await import("./cli/commands.ts");
+    return runSearch(args.slice(1).join(" "));
+  }
+
+  if (command === "resources") {
+    const { runResourceCommand } = await import("./features/resources/cli.ts");
+    return runResourceCommand(args.slice(1));
+  }
+
+  if (command === "immersive" || command === "stream" || command === "safe") {
+    const { launchTui } = await import("./tui/launch.ts");
+    await launchTui({ experience: command === "safe" ? "classic" : command, safeMode: command === "safe" });
+    return;
+  }
+
+  if (command === "doctor") {
+    const { runDoctor } = await import("./features/doctor.ts");
+    return runDoctor(args.slice(1));
+  }
+
+  if (command === "models") {
+    const { runModelCommand } = await import("./features/recognition/cli.ts");
+    return runModelCommand(args.slice(1));
   }
 
   if (command !== "read" && command !== "log") {
@@ -215,16 +91,8 @@ async function main(): Promise<number | undefined> {
     return 1;
   }
 
-  if (command === "log") openDatabase();
-  const handler = command === "read" ? handleRead : handleLog;
-  const result = handler(ref);
-  if (result.ok) {
-    console.log(result.output);
-    return 0;
-  } else {
-    console.error(result.output);
-    return 1;
-  }
+  const { runReferenceCommand } = await import("./cli/commands.ts");
+  return runReferenceCommand(command, ref);
 }
 
 main()
