@@ -9,6 +9,7 @@ interface FuzzySearchDialogProps {
   visible: boolean;
   onSelect: (surahId: number, verseId: number) => void;
   onDismiss: () => void;
+  language?: string;
 }
 
 const MAX_VISIBLE = 10;
@@ -18,14 +19,21 @@ export function FuzzySearchDialog(props: FuzzySearchDialogProps) {
   const [input, setInput] = useState("");
   const [results, setResults] = useState<FuzzySearchResult[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [indexReady, setIndexReady] = useState(isIndexReady());
+  const language = props.language ?? "en";
+  const [indexReady, setIndexReady] = useState(isIndexReady(language));
+
+  useEffect(() => {
+    setIndexReady(isIndexReady(language));
+    setResults([]);
+    setSelectedIndex(0);
+  }, [language]);
 
   // Trigger async index build when dialog opens
   useEffect(() => {
     if (props.visible && !indexReady) {
-      ensureSearcherAsync().then(() => setIndexReady(true));
+      ensureSearcherAsync(language).then(() => setIndexReady(true));
     }
-  }, [props.visible, indexReady]);
+  }, [props.visible, indexReady, language]);
 
   const runSearch = useCallback((query: string) => {
     if (query.trim().length === 0) {
@@ -33,10 +41,10 @@ export function FuzzySearchDialog(props: FuzzySearchDialogProps) {
       setSelectedIndex(0);
       return;
     }
-    const hits = fuzzySearch(query, 50);
+    const hits = fuzzySearch(query, 50, language);
     setResults(hits);
     setSelectedIndex(0);
-  }, []);
+  }, [language]);
 
   useKeyboard((key) => {
     if (!props.visible || !indexReady) return;

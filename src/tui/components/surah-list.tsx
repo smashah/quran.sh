@@ -8,6 +8,7 @@ export interface SurahListProps {
   selectedId?: number;
   focused?: boolean;
   disabled?: boolean;
+  language?: string;
   /** Set of surah IDs that have been fully read (all-time) */
   completedSurahIds?: Set<number>;
   /** Called when the inline search input gains/loses focus */
@@ -51,7 +52,7 @@ export function SurahList(props: SurahListProps) {
 
     // Search verse content (Arabic + translation) for surahs not already matched
     const nameMatchIds = new Set(byName.map((o) => o.value));
-    const verseHits = search(rawQuery);
+    const verseHits = search(rawQuery, props.language);
     const surahCounts = new Map<number, number>();
     for (const v of verseHits) {
       if (!nameMatchIds.has(v.surahId)) {
@@ -67,7 +68,7 @@ export function SurahList(props: SurahListProps) {
       }));
 
     return [...byName, ...byVerse];
-  }, [searchQuery, allOptions]);
+  }, [searchQuery, allOptions, props.language]);
 
   const [selectedIndex, setSelectedIndex] = useState(
     props.selectedId ? props.selectedId - 1 : 0
@@ -136,9 +137,7 @@ export function SurahList(props: SurahListProps) {
 
         focused={isFocused && !searchFocused}
         style={{
-          selectedColor: theme.colors.highlight,
-          selectedBold: true,
-          borderColor: theme.colors.primary,
+          selectedTextColor: theme.colors.highlight,
         }}
       />
     </box>

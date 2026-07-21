@@ -2,6 +2,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { unlink } from "node:fs/promises";
+import { fetchAyahImage } from "./ayah-image.ts";
 
 /**
  * Download the ayah image from surahquran.com and copy the PNG bytes
@@ -10,12 +11,7 @@ import { unlink } from "node:fs/promises";
  * URL format: https://surahquran.com/img/ayah/{surahId}-{verseId}.png
  */
 export async function copyAyahImage(surahId: number, verseId: number): Promise<void> {
-  const url = `https://surahquran.com/img/ayah/${surahId}-${verseId}.png`;
-
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
-
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const buffer = await fetchAyahImage(surahId, verseId);
 
   // Write to a temp file — all platform commands read from a path
   const tempPath = join(tmpdir(), `quran-ayah-${randomUUID()}.png`);

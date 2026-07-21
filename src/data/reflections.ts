@@ -36,12 +36,9 @@ export function addReflection(
   dbPath?: string,
 ): void {
   const db = openDatabase(dbPath);
-  try {
-    db.query(
-      "INSERT OR REPLACE INTO reflections (surah, ayah, verse_ref, note) VALUES (?, ?, ?, ?)",
-    ).run(surahId, ayahId, verseRef, note);
-  } finally {
-  }
+  db.query(
+    "INSERT OR REPLACE INTO reflections (surah, ayah, verse_ref, note) VALUES (?, ?, ?, ?)",
+  ).run(surahId, ayahId, verseRef, note);
 }
 
 /**
@@ -53,26 +50,23 @@ export function getReflection(
   dbPath?: string,
 ): Reflection | null {
   const db = openDatabase(dbPath);
-  try {
-    const row = db
-      .query(
-        "SELECT id, surah, ayah, verse_ref, note, created_at, updated_at FROM reflections WHERE surah = ? AND ayah = ?",
-      )
-      .get(surahId, ayahId) as Record<string, unknown> | null;
+  const row = db
+    .query(
+      "SELECT id, surah, ayah, verse_ref, note, created_at, updated_at FROM reflections WHERE surah = ? AND ayah = ?",
+    )
+    .get(surahId, ayahId) as Record<string, unknown> | null;
 
-    if (!row) return null;
+  if (!row) return null;
 
-    return {
-      id: row["id"] as number,
-      surah: row["surah"] as number,
-      ayah: row["ayah"] as number,
-      verseRef: row["verse_ref"] as string,
-      note: row["note"] as string,
-      createdAt: row["created_at"] as string,
-      updatedAt: row["updated_at"] as string,
-    };
-  } finally {
-  }
+  return {
+    id: row["id"] as number,
+    surah: row["surah"] as number,
+    ayah: row["ayah"] as number,
+    verseRef: row["verse_ref"] as string,
+    note: row["note"] as string,
+    createdAt: row["created_at"] as string,
+    updatedAt: row["updated_at"] as string,
+  };
 }
 
 /**
@@ -85,12 +79,9 @@ export function updateReflection(
   dbPath?: string,
 ): void {
   const db = openDatabase(dbPath);
-  try {
-    db.query(
-      "UPDATE reflections SET note = ?, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) WHERE surah = ? AND ayah = ?",
-    ).run(note, surahId, ayahId);
-  } finally {
-  }
+  db.query(
+    "UPDATE reflections SET note = ?, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) WHERE surah = ? AND ayah = ?",
+  ).run(note, surahId, ayahId);
 }
 
 /**
@@ -102,13 +93,10 @@ export function removeReflection(
   dbPath?: string,
 ): void {
   const db = openDatabase(dbPath);
-  try {
-    db.query("DELETE FROM reflections WHERE surah = ? AND ayah = ?").run(
-      surahId,
-      ayahId,
-    );
-  } finally {
-  }
+  db.query("DELETE FROM reflections WHERE surah = ? AND ayah = ?").run(
+    surahId,
+    ayahId,
+  );
 }
 
 /**
@@ -116,24 +104,21 @@ export function removeReflection(
  */
 export function getAllReflections(dbPath?: string): Reflection[] {
   const db = openDatabase(dbPath);
-  try {
-    const rows = db
-      .query(
-        "SELECT id, surah, ayah, verse_ref, note, created_at, updated_at FROM reflections ORDER BY created_at DESC",
-      )
-      .all() as Record<string, unknown>[];
+  const rows = db
+    .query(
+      "SELECT id, surah, ayah, verse_ref, note, created_at, updated_at FROM reflections ORDER BY created_at DESC",
+    )
+    .all() as Record<string, unknown>[];
 
-    return rows.map((row) => ({
-      id: row["id"] as number,
-      surah: row["surah"] as number,
-      ayah: row["ayah"] as number,
-      verseRef: row["verse_ref"] as string,
-      note: row["note"] as string,
-      createdAt: row["created_at"] as string,
-      updatedAt: row["updated_at"] as string,
-    }));
-  } finally {
-  }
+  return rows.map((row) => ({
+    id: row["id"] as number,
+    surah: row["surah"] as number,
+    ayah: row["ayah"] as number,
+    verseRef: row["verse_ref"] as string,
+    note: row["note"] as string,
+    createdAt: row["created_at"] as string,
+    updatedAt: row["updated_at"] as string,
+  }));
 }
 
 /**
@@ -144,22 +129,19 @@ export function getReflectionsForSurah(
   dbPath?: string,
 ): Reflection[] {
   const db = openDatabase(dbPath);
-  try {
-    const rows = db
-      .query(
-        "SELECT id, surah, ayah, verse_ref, note, created_at, updated_at FROM reflections WHERE surah = ? ORDER BY ayah ASC",
-      )
-      .all(surahId) as Record<string, unknown>[];
+  const rows = db
+    .query(
+      "SELECT id, surah, ayah, verse_ref, note, created_at, updated_at FROM reflections WHERE surah = ? ORDER BY ayah ASC",
+    )
+    .all(surahId) as Record<string, unknown>[];
 
-    return rows.map((row) => ({
-      id: row["id"] as number,
-      surah: row["surah"] as number,
-      ayah: row["ayah"] as number,
-      verseRef: row["verse_ref"] as string,
-      note: row["note"] as string,
-      createdAt: row["created_at"] as string,
-      updatedAt: row["updated_at"] as string,
-    }));
-  } finally {
-  }
+  return rows.map((row) => ({
+    id: row["id"] as number,
+    surah: row["surah"] as number,
+    ayah: row["ayah"] as number,
+    verseRef: row["verse_ref"] as string,
+    note: row["note"] as string,
+    createdAt: row["created_at"] as string,
+    updatedAt: row["updated_at"] as string,
+  }));
 }

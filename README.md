@@ -20,6 +20,7 @@
 - **Multi-Pane Reader** — Arabic (top), Translation + Transliteration (split below)
 - **10 Languages** — Bengali, English, Spanish, French, Indonesian, Russian, Swedish, Turkish, Urdu, Chinese — press `l` to cycle
 - **Arabic Text Shaping** — Proper connected Arabic rendering via `arabic-reshaper`
+- **Braille Image Mode** — Optional ayah calligraphy rendering from remote PNGs, cached in memory for the session
 - **Verse Flow Modes** — Stacked, inline, or continuous flow — press `F` to cycle
 - **Arabic Layout** — Configurable alignment (`A`) and width (`W`)
 
@@ -106,6 +107,7 @@ quran streak
 | `a` | Toggle Arabic pane |
 | `t` | Toggle Translation pane |
 | `r` | Toggle Transliteration pane |
+| `i` | Toggle online Braille image mode |
 | `s` | Toggle sidebar |
 | `B` | Toggle activity panel (Bookmarks / Cues / Reflections) |
 
@@ -115,6 +117,7 @@ quran streak
 |-----|--------|
 | `b` | Toggle bookmark on current verse |
 | `R` | Add/edit reflection |
+| `c` | Fetch and copy the current ayah PNG |
 | `! to (` | Set cue 1–9 (Shift+1–9) |
 | `/` | Search verses |
 | `m` | Toggle Reading/Browsing mode |
@@ -145,6 +148,8 @@ quran streak
 - 114 surahs, 6,236 verses
 - 10 languages: Bengali, English, Spanish, French, Indonesian, Russian, Swedish, Turkish, Urdu, Chinese
 
+The bundled Quran text, translations, bookmarks, and reading history work offline. Image mode and image clipboard copying fetch ayah PNGs from `surahquran.com`; the app asks for confirmation before enabling image mode and keeps fetched images only in memory.
+
 ## Development
 
 ```bash
@@ -164,8 +169,15 @@ bun run src/index.ts read 1
 # Run tests
 bun test
 
-# Build standalone binary
+# Type-check, test, and build both distributions
+bun run check
+
+# Build the npm/JavaScript entry
 bun run build
+# → outputs ./dist/index.js
+
+# Build the standalone binary
+bun run build:binary
 # → outputs ./dist/quran
 ```
 
@@ -189,12 +201,15 @@ terminalizer render demos/tui-full
 
 ## License
 
-MIT © smashah
+The quran.sh software is MIT licensed. Bundled Quran text and translations
+come from [quran-json](https://github.com/risan/quran-json) and are licensed
+under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); see
+[NOTICE](NOTICE) for attribution.
 
 ## Credits
 
 - Built with [Bun](https://bun.sh)
-- UI powered by [OpenTUI](https://github.com/nicktomlin/opentui)
+- UI powered by [OpenTUI](https://github.com/anomalyco/opentui)
 - Arabic shaping via [arabic-reshaper](https://github.com/a-patel/arabic-reshaper)
 - Data from [quran-json](https://github.com/risan/quran-json)
 

@@ -27,19 +27,19 @@ export function StreakChart() {
 
   return (
     <box flexDirection="column" borderStyle={theme.borderStyle} borderColor={theme.colors.border} customBorderChars={theme.borderChars} padding={1}>
-      <text bold color={theme.colors.header}>
-        Reading Activity
+      <text fg={theme.colors.header}>
+        <strong>Reading Activity</strong>
       </text>
       
       <box flexDirection="row" marginTop={1} marginBottom={1}>
-        <text color={theme.colors.highlight}>Streak: {stats.currentStreak} </text>
-        <text color={theme.colors.secondary} marginLeft={2}>Best: {stats.longestStreak} </text>
+        <text fg={theme.colors.highlight}>Streak: {stats.currentStreak} </text>
+        <text fg={theme.colors.secondary} marginLeft={2}>Best: {stats.longestStreak} </text>
       </box>
 
       <box flexDirection="row" flexWrap="wrap" width="100%">
          {days.map((date) => {
             const count = activityGrid[date] || 0;
-            return <text key={date} color={getColor(count)}>{getSymbol(count)}</text>;
+            return <text key={date} fg={getColor(count)}>{getSymbol(count)}</text>;
          })}
       </box>
     </box>

@@ -5,9 +5,10 @@
  * Database is stored at the XDG data directory: ~/.local/share/quran.sh/
  */
 import { Database } from "bun:sqlite";
-import { mkdirSync, existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { mkdirSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { MIGRATIONS } from "./migrations.ts";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -17,13 +18,6 @@ import { homedir } from "node:os";
 const xdgDataHome = process.env["XDG_DATA_HOME"] ?? join(homedir(), ".local", "share");
 const APP_DATA_DIR = join(xdgDataHome, "quran.sh");
 const DEFAULT_DB_PATH = join(APP_DATA_DIR, "quran.db");
-
-/** Resolve the migrations directory */
-let MIGRATIONS_DIR = resolve(import.meta.dir, "..", "..", "migrations");
-if (!existsSync(MIGRATIONS_DIR)) {
-  // In production (dist/index.js), import.meta.dir is dist/
-  MIGRATIONS_DIR = resolve(import.meta.dir, "..", "migrations");
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -36,34 +30,39 @@ function ensureDir(dir: string): void {
 }
 
 /**
- * Run all `.sql` migration files in order.
- * Files must be named with a numeric prefix (e.g. `001_init.sql`).
+ * Run each bundled migration exactly once and record it atomically.
  */
 function runMigrations(db: Database): void {
-  console.log(`[DB] Checking for migrations in: ${MIGRATIONS_DIR}`);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    )
+  `);
 
-  if (!existsSync(MIGRATIONS_DIR)) {
-    console.warn(`[DB] Migrations directory not found at: ${MIGRATIONS_DIR}`);
-    return;
-  }
+  const appliedRows = db
+    .query<{ name: string }, []>("SELECT name FROM schema_migrations")
+    .all();
+  const applied = new Set(appliedRows.map((row) => row.name));
 
-  const files = readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith(".sql"))
-    .sort();
+  const recordMigration = db.prepare(
+    "INSERT INTO schema_migrations (name) VALUES (?)",
+  );
 
-  if (files.length === 0) {
-    console.log(`[DB] No migration files found in ${MIGRATIONS_DIR}`);
-    return;
-  }
+  for (const migration of MIGRATIONS) {
+    if (applied.has(migration.name)) continue;
 
-  for (const file of files) {
-    console.log(`[DB] Running migration: ${file}`);
     try {
-      const sql = readFileSync(join(MIGRATIONS_DIR, file), "utf-8");
-      db.exec(sql);
-      console.log(`[DB] Successfully ran ${file}`);
+      db.exec("BEGIN IMMEDIATE");
+      db.exec(migration.sql);
+      recordMigration.run(migration.name);
+      db.exec("COMMIT");
     } catch (error) {
-      console.error(`[DB] Error running migration ${file}:`, error);
+      try {
+        db.exec("ROLLBACK");
+      } catch {
+        // SQLite may already have rolled back a failed transaction.
+      }
       throw error;
     }
   }
@@ -92,8 +91,6 @@ const dbCache = new Map<string, Database>();
 export function openDatabase(dbPath: string = DEFAULT_DB_PATH): Database {
   const cached = dbCache.get(dbPath);
   if (cached) return cached;
-
-  console.log(`[DB] Opening database at: ${dbPath}`);
 
   // Ensure parent directory exists
   ensureDir(dirname(dbPath));
@@ -124,4 +121,4 @@ export function closeDatabase(dbPath: string = DEFAULT_DB_PATH): void {
   }
 }
 
-export { DEFAULT_DB_PATH, APP_DATA_DIR, MIGRATIONS_DIR };
+export { DEFAULT_DB_PATH, APP_DATA_DIR };

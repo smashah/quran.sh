@@ -1,14 +1,13 @@
 import { describe, expect, test, afterAll } from "bun:test";
-import { addReflection, getReflection, updateReflection, removeReflection, getAllReflections, getReflectionsForSurah } from "../reflections";
-import { unlinkSync, existsSync } from "node:fs";
+import { addReflection, getReflection, updateReflection, removeReflection, getAllReflections, getReflectionsForSurah } from "../../src/data/reflections.ts";
+import { createTempDatabase } from "../helpers/temp-database.ts";
 
-const TEST_DB = "/tmp/test-reflections.db";
+const testDatabase = createTempDatabase("quran-sh-reflections");
+const TEST_DB = testDatabase.path;
 
 describe("Reflections Data Layer", () => {
   afterAll(() => {
-    if (existsSync(TEST_DB)) {
-      unlinkSync(TEST_DB);
-    }
+    testDatabase.cleanup();
   });
 
   test("addReflection and getReflection", () => {
@@ -47,7 +46,7 @@ describe("Reflections Data Layer", () => {
   test("getReflectionsForSurah returns specific surah reflections", () => {
     const reflections = getReflectionsForSurah(1, TEST_DB);
     expect(reflections.length).toBe(1);
-    expect(reflections[0].surah).toBe(1);
+    expect(reflections[0]!.surah).toBe(1);
   });
 
   test("removeReflection deletes it", () => {

@@ -1,13 +1,12 @@
 import { test, expect, describe, beforeEach, afterAll } from "bun:test";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { unlinkSync, existsSync } from "node:fs";
+import { createTempDatabase } from "../helpers/temp-database.ts";
 
 // We test via the data layer directly with a temp DB
-const TEST_DB_PATH = join(tmpdir(), `quran_stats_test_${Date.now()}.db`);
+const testDatabase = createTempDatabase("quran-sh-stats");
+const TEST_DB_PATH = testDatabase.path;
 
-import { openDatabase, closeDatabase } from "../db";
-import { getPeriodStats } from "../stats";
+import { openDatabase, closeDatabase } from "../../src/data/db.ts";
+import { getPeriodStats } from "../../src/data/stats.ts";
 
 function seedDatabase() {
     const db = openDatabase(TEST_DB_PATH);
@@ -36,21 +35,19 @@ function seedDatabase() {
 
 describe("stats data layer", () => {
     beforeEach(() => {
-        // Ensure fresh test DB — close cached instance first
-        closeDatabase(TEST_DB_PATH);
-        if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
+        const db = openDatabase(TEST_DB_PATH);
+        db.exec("DELETE FROM reading_log");
         seedDatabase();
     });
 
     afterAll(() => {
-        closeDatabase(TEST_DB_PATH);
-        if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
+        testDatabase.cleanup();
     });
 
     test("getPeriodStats('all') returns all log entries", () => {
         // We need to ensure the test uses the right DB
         // For now this is a structural test to verify the query shape
-        const stats = getPeriodStats("all");
+        const stats = getPeriodStats("all", undefined, TEST_DB_PATH);
         expect(stats).toHaveProperty("versesRead");
         expect(stats).toHaveProperty("uniqueVerses");
         expect(stats).toHaveProperty("surahsTouched");
@@ -65,7 +62,7 @@ describe("stats data layer", () => {
         // Clean the DB
         const db = openDatabase(TEST_DB_PATH);
         db.exec("DELETE FROM reading_log");
-        const stats = getPeriodStats("all");
+        const stats = getPeriodStats("all", undefined, TEST_DB_PATH);
         expect(stats.versesRead).toBe(0);
         expect(stats.uniqueVerses).toBe(0);
         expect(stats.surahsTouched).toBe(0);
@@ -75,7 +72,7 @@ describe("stats data layer", () => {
     test("all period types return valid PeriodStats", () => {
         const periods = ["session", "today", "month", "year", "all"] as const;
         for (const period of periods) {
-            const stats = getPeriodStats(period, new Date().toISOString());
+            const stats = getPeriodStats(period, new Date().toISOString(), TEST_DB_PATH);
             expect(stats).toHaveProperty("versesRead");
             expect(stats.versesRead).toBeGreaterThanOrEqual(0);
         }

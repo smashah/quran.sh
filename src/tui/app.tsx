@@ -1,5 +1,5 @@
-import { useKeyboard } from "@opentui/react";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useKeyboard, useRenderer } from "@opentui/react";
+import { useState, useEffect, useCallback, useRef, useReducer } from "react";
 import { Layout } from "./components/layout";
 import { RouteProvider } from "./router";
 import { SurahList } from "./components/surah-list";
@@ -19,7 +19,6 @@ import { RtlCalibrationDialog } from "./components/rtl-calibration-dialog";
 import { setRtlStrategy, getRtlStrategy, type RtlStrategy } from "./utils/rtl";
 import { copyAyahImage } from "./utils/clipboard";
 import { ImageWarningDialog } from "./components/image-warning-dialog";
-import type { CommandItem } from "./components/command-palette";
 import { toggleBookmark, getBookmarkedAyahs, getAllBookmarks } from "../data/bookmarks";
 import type { Bookmark } from "../data/bookmarks";
 import { setCue, getCue, getAllCues } from "../data/cues";
@@ -35,15 +34,23 @@ import type { VerseRef } from "../data/quran";
 import { ThemeProvider, useTheme } from "./theme";
 import type { Theme } from "./theme";
 import { ModeProvider, useMode } from "./mode";
+import { buildAppCommands, type AppCommandId, type CommandActions } from "./commands.ts";
+import { firstReaderPane, focusReducer, type FocusablePane, type PaneVisibility } from "./focus.ts";
 
 export { useTheme };
 export type { Theme };
 
-export type FocusablePane = "sidebar" | "arabic" | "translation" | "transliteration" | "panel";
+export type { FocusablePane } from "./focus.ts";
 
 export type ArabicAlign = "right" | "center" | "left";
 export type ArabicWidth = "100%" | "80%" | "60%";
 export type ArabicFlow = "verse" | "continuous";
+
+function useLatest<T>(value: T) {
+  const ref = useRef(value);
+  ref.current = value;
+  return ref;
+}
 
 // ---------------------------------------------------------------------------
 // Load saved preferences (runs once at module level, before any render)
@@ -79,9 +86,13 @@ if (savedPrefs.rtlStrategy) {
 function AppContent() {
   const { cycleTheme } = useTheme();
   const { cycleMode } = useMode();
+  const renderer = useRenderer();
 
   const [selectedSurahId, setSelectedSurahId] = useState(savedPrefs.selectedSurahId);
-  const [focusedPanel, setFocusedPanel] = useState<FocusablePane>("sidebar");
+  const [focusedPanel, dispatchFocus] = useReducer(focusReducer, "sidebar");
+  const setFocusedPanel = useCallback((pane: FocusablePane) => {
+    dispatchFocus({ type: "set", pane });
+  }, []);
   const [sidebarSubFocus, setSidebarSubFocus] = useState<"surahList" | "stats">("surahList");
   const [surahSearchFocused, setSurahSearchFocused] = useState(false);
   const [currentVerseId, setCurrentVerseId] = useState(savedPrefs.currentVerseId);
@@ -163,11 +174,6 @@ function AppContent() {
   const [allCues, setAllCues] = useState<Cue[]>([]);
   const [allReflections, setAllReflections] = useState<Reflection[]>([]);
 
-  // Command palette: actionable items with their labels and actions
-  interface PaletteCommand extends CommandItem {
-    action: () => void;
-  }
-
   const refreshBookmarks = useCallback(() => {
     try {
       setBookmarkedAyahs(getBookmarkedAyahs(selectedSurahId));
@@ -195,179 +201,172 @@ function AppContent() {
   const isReaderPane = (p: FocusablePane) => p === "arabic" || p === "translation" || p === "transliteration";
 
   const cycleFocus = useCallback(() => {
-    const panes: FocusablePane[] = [];
-    if (showSidebar) panes.push("sidebar");
-    panes.push("arabic");
-    if (showTranslation) panes.push("translation");
-    if (showTransliteration) panes.push("transliteration");
-    if (showPanel) panes.push("panel");
-
-    const idx = panes.indexOf(focusedPanel);
-    const next = panes[(idx + 1) % panes.length]!;
-    setFocusedPanel(next);
-  }, [showSidebar, showTranslation, showTransliteration, showPanel, focusedPanel]);
+    dispatchFocus({
+      type: "cycle",
+      visibility: { showSidebar, showArabic, showTranslation, showTransliteration, showPanel },
+    });
+  }, [showSidebar, showArabic, showTranslation, showTransliteration, showPanel]);
 
   // True when any modal/overlay is open — used to disable focus on child components
   const anyModalOpen = showPalette || showReflectionDialog || showHelp || isSearchMode || showMarkSurahDialog || showResetDialog || showFuzzySearch || showCalibration || showImageWarningDialog;
 
-  // We use refs to access latest state inside the keyboard handler
+  // Keep the latest state available inside the keyboard handler
   // (avoids stale closures without needing to list every state var as dep)
   const sessionStartRef = useRef(new Date().toISOString());
-  const stateRef = useRef({
+  const stateRef = useLatest({
     selectedSurahId, currentVerseId, focusedPanel, isSearchMode, searchInput,
     searchResults, showHelp, showSidebar, showPanel, showPalette, paletteIndex,
     showReflectionDialog, reflectionInput, showArabic, showArabicImage, showTranslation, showTransliteration,
     language, panelTab, panelIndex, allBookmarks, allCues, allReflections, anyModalOpen,
     arabicAlign, arabicWidth, arabicFlow, readingMode, hasSeenImageWarning, showImageWarningDialog,
+    showMarkSurahDialog, showResetDialog, showFuzzySearch, showCalibration,
   });
-  stateRef.current = {
-    selectedSurahId, currentVerseId, focusedPanel, isSearchMode, searchInput,
-    searchResults, showHelp, showSidebar, showPanel, showPalette, paletteIndex,
-    showReflectionDialog, reflectionInput, showArabic, showArabicImage, showTranslation, showTransliteration,
-    language, panelTab, panelIndex, allBookmarks, allCues, allReflections, anyModalOpen,
-    arabicAlign, arabicWidth, arabicFlow, readingMode, hasSeenImageWarning, showImageWarningDialog,
+
+  const paneVisibility = (overrides: Partial<PaneVisibility> = {}): PaneVisibility => ({
+    showSidebar: stateRef.current.showSidebar,
+    showArabic: stateRef.current.showArabic,
+    showTranslation: stateRef.current.showTranslation,
+    showTransliteration: stateRef.current.showTransliteration,
+    showPanel: stateRef.current.showPanel,
+    ...overrides,
+  });
+
+  const commandActions: CommandActions = {
+    "toggle-arabic": () => {
+      const s = stateRef.current;
+      const next = !s.showArabic;
+      setShowArabic(next);
+      if (!next && s.focusedPanel === "arabic") {
+        setFocusedPanel(firstReaderPane(paneVisibility({ showArabic: false })));
+      }
+    },
+    "toggle-image": () => {
+      if (!stateRef.current.hasSeenImageWarning) setShowImageWarningDialog(true);
+      else setShowArabicImage((visible) => !visible);
+    },
+    "toggle-translation": () => {
+      const s = stateRef.current;
+      const next = !s.showTranslation;
+      setShowTranslation(next);
+      if (!next && s.focusedPanel === "translation") {
+        setFocusedPanel(firstReaderPane(paneVisibility({ showTranslation: false })));
+      }
+    },
+    "toggle-transliteration": () => {
+      const s = stateRef.current;
+      const next = !s.showTransliteration;
+      setShowTransliteration(next);
+      if (!next && s.focusedPanel === "transliteration") {
+        setFocusedPanel(firstReaderPane(paneVisibility({ showTransliteration: false })));
+      }
+    },
+    "cycle-language": () => {
+      const languageIndex = LANGUAGES.indexOf(stateRef.current.language as (typeof LANGUAGES)[number]);
+      if (languageIndex !== -1) setLanguage(LANGUAGES[(languageIndex + 1) % LANGUAGES.length]!);
+    },
+    "toggle-reading": () => setReadingMode((enabled) => {
+      const next = !enabled;
+      showFlash(next ? "📖 Reading mode" : "📋 Browsing mode");
+      return next;
+    }),
+    "cycle-mode": cycleMode,
+    "cycle-theme": cycleTheme,
+    "toggle-sidebar": () => {
+      const s = stateRef.current;
+      const next = !s.showSidebar;
+      setShowSidebar(next);
+      if (!next && s.focusedPanel === "sidebar") {
+        setFocusedPanel(firstReaderPane(paneVisibility({ showSidebar: false })));
+      } else if (next) {
+        setFocusedPanel("sidebar");
+      }
+    },
+    "toggle-panel": () => {
+      const s = stateRef.current;
+      const next = !s.showPanel;
+      setShowPanel(next);
+      if (!next && s.focusedPanel === "panel") {
+        setFocusedPanel(firstReaderPane(paneVisibility({ showPanel: false })));
+      } else if (next) {
+        refreshPanelData();
+        setFocusedPanel("panel");
+      }
+    },
+    "zoom-in": () => setArabicZoom((zoom) => Math.min(zoom + 1, 5)),
+    "zoom-out": () => setArabicZoom((zoom) => Math.max(zoom - 1, 0)),
+    "cycle-align": () => {
+      const values: ArabicAlign[] = ["right", "center", "left"];
+      const current = values.indexOf(stateRef.current.arabicAlign);
+      const next = values[(current + 1) % values.length]!;
+      setArabicAlign(next);
+      showFlash(`Arabic align: ${next}`);
+    },
+    "cycle-width": () => {
+      const values: ArabicWidth[] = ["100%", "80%", "60%"];
+      const current = values.indexOf(stateRef.current.arabicWidth);
+      const next = values[(current + 1) % values.length]!;
+      setArabicWidth(next);
+      showFlash(`Arabic width: ${next}`);
+    },
+    "cycle-flow": () => {
+      const values: ArabicFlow[] = ["verse", "continuous"];
+      const current = values.indexOf(stateRef.current.arabicFlow);
+      const next = values[(current + 1) % values.length]!;
+      setArabicFlow(next);
+      showFlash(`Arabic flow: ${next}`);
+    },
+    "toggle-bookmark": () => {
+      const s = stateRef.current;
+      try {
+        toggleBookmark(s.selectedSurahId, s.currentVerseId, `${s.selectedSurahId}:${s.currentVerseId}`);
+        refreshBookmarks();
+        if (s.showPanel) refreshPanelData();
+      } catch { /* DB may not be available in tests */ }
+    },
+    "copy-image": () => {
+      const s = stateRef.current;
+      showFlash("Fetching ayah image…");
+      copyAyahImage(s.selectedSurahId, s.currentVerseId)
+        .then(() => showFlash(`Copied ${s.selectedSurahId}:${s.currentVerseId} image ✓`))
+        .catch((error: Error) => showFlash(`Copy failed: ${error.message}`));
+    },
+    "add-reflection": () => {
+      const s = stateRef.current;
+      try {
+        setReflectionInput(getReflection(s.selectedSurahId, s.currentVerseId)?.note ?? "");
+        setShowReflectionDialog(true);
+      } catch { /* DB may not be available in tests */ }
+    },
+    "cycle-focus": cycleFocus,
+    search: () => {
+      setIsSearchMode(true);
+      setSearchInput("");
+      setFocusedPanel(firstReaderPane(paneVisibility()));
+    },
+    "fuzzy-search": () => setShowFuzzySearch(true),
+    help: () => setShowHelp(true),
+    "reset-tracking": () => setShowResetDialog(true),
+    reindex: () => {
+      showFlash("Re-indexing…");
+      reindex(stateRef.current.language)
+        .then(() => showFlash("Search index rebuilt ✓"))
+        .catch((error: Error) => showFlash(`Re-index failed: ${error.message}`));
+    },
+    calibrate: () => setShowCalibration(true),
+    quit: () => renderer.destroy(),
   };
 
-  const paletteCommands: PaletteCommand[] = [
-    { key: "a", label: "Toggle Arabic", description: "Show/hide Arabic pane", action: () => setShowArabic((prev) => !prev) },
-    { key: "i", label: "Toggle Arabic Image", description: "Show/hide ayah image render", action: () => {
-      if (!stateRef.current.hasSeenImageWarning) {
-        setShowImageWarningDialog(true);
-      } else {
-        setShowArabicImage((prev) => !prev);
-      }
-    } },
-    { key: "t", label: "Toggle Translation", description: "Show/hide Translation pane", action: () => setShowTranslation((prev) => !prev) },
-    { key: "r", label: "Toggle Transliteration", description: "Show/hide Transliteration pane", action: () => setShowTransliteration((prev) => !prev) },
-    {
-      key: "l",
-      label: "Cycle Language",
-      description: "Switch translation language",
-      action: () => {
-        const s = stateRef.current;
-        const idx = LANGUAGES.indexOf(s.language as any);
-        if (idx !== -1) setLanguage(LANGUAGES[(idx + 1) % LANGUAGES.length]!);
-      },
-    },
-    { key: "m", label: "Toggle Reading Mode", description: "Switch browsing/reading mode", action: () => {
-      setReadingMode(prev => !prev);
-      showFlash(stateRef.current.readingMode ? "📋 Browsing mode" : "📖 Reading mode");
-    } },
-    { key: "D", label: "Cycle Mode", description: "Switch light/dark mode", action: () => cycleMode() },
-    { key: "T", label: "Cycle Theme", description: "Switch dynasty theme", action: () => cycleTheme() },
-    {
-      key: "s",
-      label: "Toggle Sidebar",
-      description: "Show/hide surah sidebar",
-      action: () => {
-        const s = stateRef.current;
-        const wasVisible = s.showSidebar;
-        setShowSidebar((prev) => !prev);
-        if (wasVisible && s.focusedPanel === "sidebar") setFocusedPanel("arabic");
-        if (!wasVisible) setFocusedPanel("sidebar");
-      },
-    },
-    {
-      key: "B",
-      label: "Toggle Panel",
-      description: "Show/hide activity panel",
-      action: () => {
-        const s = stateRef.current;
-        const wasVisible = s.showPanel;
-        setShowPanel((prev) => !prev);
-        if (wasVisible && s.focusedPanel === "panel") setFocusedPanel("arabic");
-        if (!wasVisible) {
-          refreshPanelData();
-          setFocusedPanel("panel");
-        }
-      },
-    },
-    { key: "+", label: "Zoom In Arabic", description: "Increase Arabic text size", action: () => setArabicZoom((prev) => Math.min(prev + 1, 5)) },
-    { key: "-", label: "Zoom Out Arabic", description: "Decrease Arabic text size", action: () => setArabicZoom((prev) => Math.max(prev - 1, 0)) },
-    {
-      key: "b",
-      label: "Toggle Bookmark",
-      description: "Bookmark current verse",
-      action: () => {
-        const s = stateRef.current;
-        const verseRef = `${s.selectedSurahId}:${s.currentVerseId}`;
-        try {
-          toggleBookmark(s.selectedSurahId, s.currentVerseId, verseRef);
-          refreshBookmarks();
-          if (s.showPanel) refreshPanelData();
-        } catch {
-          /* DB may not be available */
-        }
-      },
-    },
-    {
-      key: "c",
-      label: "Copy Ayah Image",
-      description: "Copy current verse image to clipboard (surahquran.com)",
-      action: () => {
-        const s = stateRef.current;
-        showFlash("Fetching ayah image…");
-        copyAyahImage(s.selectedSurahId, s.currentVerseId)
-          .then(() => showFlash(`Copied ${s.selectedSurahId}:${s.currentVerseId} image ✓`))
-          .catch((e: Error) => showFlash(`Copy failed: ${e.message}`));
-      },
-    },
-    {
-      key: "R",
-      label: "Add Reflection",
-      description: "Add/edit reflection for current verse",
-      action: () => {
-        const s = stateRef.current;
-        try {
-          const existing = getReflection(s.selectedSurahId, s.currentVerseId);
-          setReflectionInput(existing ? existing.note : "");
-          setShowReflectionDialog(true);
-        } catch {
-          /* DB */
-        }
-      },
-    },
-    { key: "Tab", label: "Cycle Focus", description: "Move focus between panes", action: () => cycleFocus() },
-    {
-      key: "/",
-      label: "Search",
-      description: "Search verses",
-      action: () => {
-        setIsSearchMode(true);
-        setSearchInput("");
-        setFocusedPanel("arabic");
-      },
-    },
-    { key: "Ctrl+F", label: "Fuzzy Search", description: "Fuzzy search across Arabic, translation & transliteration", action: () => setShowFuzzySearch(true) },
-    { key: "?", label: "Help", description: "Show keyboard shortcuts", action: () => setShowHelp(true) },
-    { key: "X", label: "Reset Tracking", description: "Delete reading data by period", action: () => setShowResetDialog(true) },
-    { key: "I", label: "Re-index Search", description: "Rebuild fuzzy search index", action: () => {
-      showFlash("Re-indexing…");
-      reindex().then(() => showFlash("Search index rebuilt ✓"));
-    } },
-    { key: "C", label: "Re-calibrate Arabic", description: "Re-run Arabic rendering calibration", action: () => setShowCalibration(true) },
-    { key: "q", label: "Quit", description: "Exit application", action: () => process.exit(0) },
-  ];
+  const paletteCommands = buildAppCommands(commandActions);
+  const runCommand = (id: AppCommandId): void => {
+    paletteCommands.find((command) => command.id === id)?.action();
+  };
 
   useKeyboard((key) => {
     const s = stateRef.current;
-    // Ctrl+P: toggle command palette
-    if (key.ctrl && key.name === "p") {
-      setShowPalette((prev) => !prev);
-      setPaletteIndex(0);
-      return;
-    }
-
-    // Ctrl+F: toggle fuzzy search dialog
-    if (key.ctrl && key.name === "f") {
-      setShowFuzzySearch((prev) => !prev);
-      return;
-    }
-
     const str = key.sequence || key.name;
 
     if (s.showPalette) {
-      if (key.name === "escape") {
+      if (key.name === "escape" || (key.ctrl && key.name === "p")) {
         setShowPalette(false);
         return;
       }
@@ -379,7 +378,7 @@ function AppContent() {
         setPaletteIndex((prev) => (prev - 1 + paletteCommands.length) % paletteCommands.length);
         return;
       }
-      if (key.name === "return") {
+      if (key.name === "return" || key.name === "enter") {
         const cmd = paletteCommands[s.paletteIndex];
         if (cmd) {
           cmd.action();
@@ -390,12 +389,21 @@ function AppContent() {
       return;
     }
 
+    // Dialogs with their own keyboard hooks exclusively own input while open.
+    if (
+      s.showCalibration ||
+      s.showImageWarningDialog ||
+      s.showMarkSurahDialog ||
+      s.showResetDialog ||
+      s.showFuzzySearch
+    ) return;
+
     if (s.showReflectionDialog) {
       if (key.name === "escape") {
         setShowReflectionDialog(false);
         return;
       }
-      if (key.name === "return") {
+      if (key.name === "return" || key.name === "enter") {
         const verseRef = `${s.selectedSurahId}:${s.currentVerseId}`;
         try {
           addReflection(s.selectedSurahId, s.currentVerseId, verseRef, s.reflectionInput);
@@ -425,22 +433,6 @@ function AppContent() {
       return;
     }
 
-    // MarkSurahDialog has its own useKeyboard for y/n/escape;
-    // we just need the main handler to stop processing further.
-    if (showMarkSurahDialog) {
-      return;
-    }
-
-    // ResetTrackingDialog has its own useKeyboard handler.
-    if (showResetDialog) {
-      return;
-    }
-
-    // FuzzySearchDialog has its own useKeyboard handler.
-    if (showFuzzySearch) {
-      return;
-    }
-
     if (s.isSearchMode) {
       if (key.name === 'escape') {
         setIsSearchMode(false);
@@ -449,10 +441,10 @@ function AppContent() {
         setSearchQuery("");
         return;
       }
-      if (key.name === 'return') {
+      if (key.name === 'return' || key.name === 'enter') {
         const query = s.searchInput;
         if (query.trim().length > 0) {
-          const results = search(query);
+          const results = search(query, s.language);
           setSearchResults(results);
           setSearchQuery(query);
         }
@@ -472,15 +464,6 @@ function AppContent() {
 
     // --- Beyond this point: global shortcuts ---
     const sidebarActive = s.focusedPanel === "sidebar";
-
-    if (key.name === 'q') {
-      process.exit(0);
-    }
-
-    if (str === '?') {
-      setShowHelp(true);
-      return;
-    }
 
     // When sidebar is focused AND the surah search input is active,
     // block everything except Tab/Shift+Tab so the <input> can type freely.
@@ -512,7 +495,15 @@ function AppContent() {
         cycleFocus();
         return;
       }
+      // SurahList owns `/` and moves focus into its inline search input.
+      if (str === "/") return;
       // Fall through to global shortcuts below
+    }
+
+    if (key.ctrl && key.name === "p") {
+      setShowPalette(true);
+      setPaletteIndex(0);
+      return;
     }
 
     if (s.focusedPanel === "panel") {
@@ -556,129 +547,18 @@ function AppContent() {
       }
     }
 
-    if (str === 'a') {
-      setShowArabic(prev => !prev);
-      return;
-    }
-    if (str === 'i') {
-      if (!s.hasSeenImageWarning) {
-        setShowImageWarningDialog(true);
-      } else {
-        setShowArabicImage(prev => !prev);
-      }
-      return;
-    }
-    if (str === 't') {
-      setShowTranslation(prev => !prev);
-      return;
-    }
-    if (str === 'r') {
-      setShowTransliteration(prev => !prev);
-      return;
-    }
-    if (str === 'l') {
-      const idx = LANGUAGES.indexOf(s.language as any);
-      if (idx !== -1) {
-        const next = LANGUAGES[(idx + 1) % LANGUAGES.length]!;
-        setLanguage(next);
-      }
-      return;
-    }
-
-    if (str === 'A') {
-      const aligns: ArabicAlign[] = ["right", "center", "left"];
-      const idx = aligns.indexOf(s.arabicAlign);
-      const next = aligns[(idx + 1) % aligns.length]!;
-      setArabicAlign(next);
-      showFlash(`Arabic align: ${next}`);
-      return;
-    }
-    if (str === 'W') {
-      const widths: ArabicWidth[] = ["100%", "80%", "60%"];
-      const idx = widths.indexOf(s.arabicWidth);
-      const next = widths[(idx + 1) % widths.length]!;
-      setArabicWidth(next);
-      showFlash(`Arabic width: ${next}`);
-      return;
-    }
-    if (str === 'F') {
-      const flows: ArabicFlow[] = ["verse", "continuous"];
-      const idx = flows.indexOf(s.arabicFlow);
-      const next = flows[(idx + 1) % flows.length]!;
-      setArabicFlow(next);
-      showFlash(`Arabic flow: ${next}`);
-      return;
-    }
-
-    if (str === 'T') {
-      cycleTheme();
-      return;
-    }
-
-    if (str === 'D') {
-      cycleMode();
-      return;
-    }
-
-    if (str === 's') {
-      const wasVisible = s.showSidebar;
-      setShowSidebar(prev => !prev);
-      if (wasVisible && s.focusedPanel === "sidebar") {
-        setFocusedPanel("arabic");
-      }
-      if (!wasVisible) {
-        setFocusedPanel("sidebar");
-      }
-      return;
-    }
-
-    if (str === 'B') {
-      const wasVisible = s.showPanel;
-      setShowPanel(prev => !prev);
-      if (wasVisible && s.focusedPanel === "panel") {
-        setFocusedPanel("arabic");
-      }
-      if (!wasVisible) {
-        refreshPanelData();
-        setFocusedPanel("panel");
-      }
-      return;
-    }
-
-    if (str === "R") {
-      try {
-        const existing = getReflection(s.selectedSurahId, s.currentVerseId);
-        setReflectionInput(existing ? existing.note : "");
-        setShowReflectionDialog(true);
-      } catch {
-        /* DB */
-      }
-      return;
-    }
-
-    if (str === "X") {
-      setShowResetDialog(true);
-      return;
-    }
-
-    if (str === '+' || str === '=') {
-      setArabicZoom(prev => Math.min(prev + 1, 5));
-      return;
-    }
-    if (str === '-') {
-      setArabicZoom(prev => Math.max(prev - 1, 0));
-      return;
-    }
-
-    if (key.name === 'tab') {
-      cycleFocus();
-      return;
-    }
-
-    if (str === '/') {
-      setIsSearchMode(true);
-      setSearchInput("");
-      setFocusedPanel("arabic");
+    const shortcut = key.ctrl && key.name === "f"
+      ? "Ctrl+F"
+      : key.name === "tab"
+        ? "Tab"
+        : str === "="
+          ? "+"
+          : str;
+    const globalCommand = paletteCommands.find(
+      (command) => command.scope === "global" && command.key === shortcut,
+    );
+    if (globalCommand) {
+      globalCommand.action();
       return;
     }
 
@@ -741,31 +621,20 @@ function AppContent() {
         }
       }
       if (str === 'b') {
-        const verseRef = `${s.selectedSurahId}:${s.currentVerseId}`;
-        try {
-          toggleBookmark(s.selectedSurahId, s.currentVerseId, verseRef);
-          refreshBookmarks();
-          if (s.showPanel) refreshPanelData();
-        } catch {
-          // DB may not be available
-        }
+        runCommand("toggle-bookmark");
+        return;
       }
       if (str === 'c') {
-        showFlash("Fetching ayah image…");
-        copyAyahImage(s.selectedSurahId, s.currentVerseId)
-          .then(() => showFlash(`Copied ${s.selectedSurahId}:${s.currentVerseId} image ✓`))
-          .catch((e: Error) => showFlash(`Copy failed: ${e.message}`));
+        runCommand("copy-image");
         return;
       }
       if (str === 'h') {
-        setShowHelp(true);
+        runCommand("help");
+        return;
       }
       if (str === 'm') {
-        setReadingMode(prev => {
-          const next = !prev;
-          showFlash(next ? "📖 Reading mode" : "📋 Browsing mode");
-          return next;
-        });
+        runCommand("toggle-reading");
+        return;
       }
     }
   });
@@ -846,6 +715,7 @@ function AppContent() {
                 selectedId={selectedSurahId}
                 focused={focusedPanel === "sidebar" && sidebarSubFocus === "surahList"}
                 disabled={anyModalOpen}
+                language={language}
                 completedSurahIds={completedSurahIds}
                 onSearchFocusChange={setSurahSearchFocused}
               />
@@ -973,6 +843,7 @@ function AppContent() {
         />
         <FuzzySearchDialog
           visible={showFuzzySearch}
+          language={language}
           onSelect={(surahId, verseId) => {
             setSelectedSurahId(surahId);
             setCurrentVerseId(verseId);

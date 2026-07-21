@@ -263,7 +263,13 @@ describe("getVerse", () => {
 // search
 // ---------------------------------------------------------------------------
 
-describe("search", () => {
+  describe("search", () => {
+    it("searches the requested translation language", () => {
+      const results = search("Au nom d'Allah", "fr");
+      expect(results.some((result) => result.reference === "1:1")).toBe(true);
+      expect(results[0]?.translation).toContain("Au nom d'Allah");
+    });
+
   it("finds verses containing 'mercy'", () => {
     const results = search("mercy");
     expect(results.length).toBeGreaterThan(0);

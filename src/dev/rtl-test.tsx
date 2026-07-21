@@ -1,12 +1,13 @@
 /**
  * Arabic rendering test harness — FrameBuffer + Reshaper edition.
- * Run: bun run test.tsx
+ * Run: bun run src/dev/rtl-test.tsx
  *
  * Tests: "بِسۡمِ ٱللَّهِ ٱلرَّحۡمَٰنِ ٱلرَّحِيمِ"
  */
 import {
   FrameBufferRenderable,
   TextRenderable,
+  TextAttributes,
   RGBA,
   createCliRenderer,
 } from "@opentui/core";
@@ -39,8 +40,8 @@ async function main() {
     root.add(new TextRenderable(renderer, {
       id: `l-${Math.random().toString(36).slice(2, 6)}`,
       content: `▸ ${text}`,
-      bold: true,
-      color,
+      attributes: TextAttributes.BOLD,
+      fg: color,
     }));
   }
 

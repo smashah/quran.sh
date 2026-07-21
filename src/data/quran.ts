@@ -5,7 +5,17 @@
  * All verse numbering is 1-based to match Islamic scholarly convention.
  * Supports multiple languages and transliteration.
  */
-import { createRequire } from "node:module";
+import quranBn from "quran-json/dist/quran_bn.json";
+import quranEn from "quran-json/dist/quran_en.json";
+import quranEs from "quran-json/dist/quran_es.json";
+import quranFr from "quran-json/dist/quran_fr.json";
+import quranId from "quran-json/dist/quran_id.json";
+import quranRu from "quran-json/dist/quran_ru.json";
+import quranSv from "quran-json/dist/quran_sv.json";
+import quranTr from "quran-json/dist/quran_tr.json";
+import quranTransliteration from "quran-json/dist/quran_transliteration.json";
+import quranUr from "quran-json/dist/quran_ur.json";
+import quranZh from "quran-json/dist/quran_zh.json";
 
 // ---------------------------------------------------------------------------
 // Raw JSON types (matching quran-json chapter file structure)
@@ -16,7 +26,12 @@ interface RawVerse {
   id: number;
   text: string;
   translation: string;
-  transliteration: string;
+  transliteration?: string;
+}
+
+interface RawTransliterationChapter {
+  id: number;
+  verses: Array<{ id: number; transliteration: string }>;
 }
 
 /** Chapter as stored in per-chapter JSON files */
@@ -28,15 +43,6 @@ interface RawChapter {
   type: string;
   total_verses: number;
   verses: RawVerse[];
-}
-
-/** Chapter index entry (from chapters/index.json, no verses) */
-interface RawChapterIndex {
-  id: number;
-  name: string;
-  transliteration: string;
-  type: string;
-  total_verses: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,6 +65,7 @@ export const LANGUAGES = [
   "ur",
   "zh",
 ] as const;
+export type Language = (typeof LANGUAGES)[number];
 
 /** A single verse (ayah) */
 export interface Verse {
@@ -108,30 +115,41 @@ export interface VerseRef {
 // Data loading (lazy, cached)
 // ---------------------------------------------------------------------------
 
-const _require = createRequire(import.meta.url);
+const DATASETS: Record<Language, RawChapter[]> = {
+  bn: quranBn as RawChapter[],
+  en: quranEn as RawChapter[],
+  es: quranEs as RawChapter[],
+  fr: quranFr as RawChapter[],
+  id: quranId as RawChapter[],
+  ru: quranRu as RawChapter[],
+  sv: quranSv as RawChapter[],
+  tr: quranTr as RawChapter[],
+  ur: quranUr as RawChapter[],
+  zh: quranZh as RawChapter[],
+};
 
-/**
- * Per-chapter cache keyed by "${language}:${chapterId}".
- * Avoids re-reading individual chapter JSON files.
- */
-const _chapterCache = new Map<string, RawChapter>();
+const TRANSLITERATIONS = quranTransliteration as RawTransliterationChapter[];
+
+function getTransliteration(chapterId: number, verseId: number): string | undefined {
+  return TRANSLITERATIONS[chapterId - 1]?.verses[verseId - 1]?.transliteration;
+}
 
 /**
  * Chapter index: lightweight metadata for name-to-id resolution.
  * Loaded lazily from chapters/index.json (no verse data).
  */
-let _chapterIndex: RawChapterIndex[] | null = null;
 let _indexByName: Map<string, number> | null = null;
 
 function loadChapterIndex(): void {
-  if (_chapterIndex !== null) return;
-  _chapterIndex = _require(
-    "quran-json/dist/chapters/index.json",
-  ) as RawChapterIndex[];
+  if (_indexByName !== null) return;
   _indexByName = new Map<string, number>();
-  for (const entry of _chapterIndex) {
+  for (const entry of DATASETS.en) {
     _indexByName.set(entry.transliteration.toLowerCase(), entry.id);
   }
+}
+
+function resolveLanguage(language: string): Language {
+  return LANGUAGES.includes(language as Language) ? language as Language : "en";
 }
 
 /**
@@ -139,19 +157,7 @@ function loadChapterIndex(): void {
  * Uses the per-chapter files at quran-json/dist/chapters/{lang}/{id}.json.
  */
 function loadChapter(language: string, id: number): RawChapter | null {
-  const cacheKey = `${language}:${id}`;
-  const cached = _chapterCache.get(cacheKey);
-  if (cached) return cached;
-
-  try {
-    const chapter = _require(
-      `quran-json/dist/chapters/${language}/${id}.json`,
-    ) as RawChapter;
-    _chapterCache.set(cacheKey, chapter);
-    return chapter;
-  } catch {
-    return null;
-  }
+  return DATASETS[resolveLanguage(language)][id - 1] ?? null;
 }
 
 /**
@@ -180,18 +186,11 @@ function normalizeArabic(text: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Monolithic English data (kept ONLY for search)
+// Monolithic per-language data (kept only for full-text search)
 // ---------------------------------------------------------------------------
 
-let _searchChapters: RawChapter[] | null = null;
-
-function loadSearchData(): RawChapter[] {
-  if (_searchChapters === null) {
-    _searchChapters = _require(
-      "quran-json/dist/quran_en.json",
-    ) as RawChapter[];
-  }
-  return _searchChapters;
+function loadSearchData(language: string): RawChapter[] {
+  return DATASETS[resolveLanguage(language)];
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +209,7 @@ function rawToSurah(raw: RawChapter): Surah {
       id: v.id,
       text: v.text,
       translation: v.translation,
-      transliteration: v.transliteration || undefined,
+      transliteration: v.transliteration ?? getTransliteration(raw.id, v.id),
     })),
   };
 }
@@ -223,9 +222,16 @@ function rawToVerseRef(ch: RawChapter, v: RawVerse): VerseRef {
     verseId: v.id,
     text: v.text,
     translation: v.translation,
-    transliteration: v.transliteration || undefined,
+    transliteration: v.transliteration ?? getTransliteration(ch.id, v.id),
     reference: `${ch.id}:${v.id}`,
   };
+}
+
+/** Return every verse in a language for the in-memory fuzzy index. */
+export function getAllVerseRefs(language: string = "en"): VerseRef[] {
+  return loadSearchData(language).flatMap((chapter) =>
+    chapter.verses.map((verse) => rawToVerseRef(chapter, verse)),
+  );
 }
 
 /**
@@ -318,24 +324,24 @@ export function getVerse(
 }
 
 /**
- * Search verse translations for a query string.
- *
- * Currently searches English translations only (monolithic quran_en.json).
+ * Search verse translations and Arabic text for a query string.
  *
  * @param query - Case-insensitive search term.
+ * @param language - Translation language to search (default: English).
  * @returns Array of matching verses with references. Empty array if no matches
  *          or if query is empty/whitespace.
  */
-export function search(query: string): VerseRef[] {
+export function search(query: string, language: string = "en"): VerseRef[] {
   const trimmed = query.trim().toLowerCase();
   if (trimmed.length === 0) return [];
 
   const results: VerseRef[] = [];
-  const chapters = loadSearchData();
+  const chapters = loadSearchData(language);
+  const normalizedArabicQuery = normalizeArabic(query.trim());
 
   for (const ch of chapters) {
     for (const v of ch.verses) {
-      if (v.translation.toLowerCase().includes(trimmed) || normalizeArabic(v.text).includes(normalizeArabic(query.trim()))) {
+      if (v.translation.toLowerCase().includes(trimmed) || normalizeArabic(v.text).includes(normalizedArabicQuery)) {
         results.push(rawToVerseRef(ch, v));
       }
     }

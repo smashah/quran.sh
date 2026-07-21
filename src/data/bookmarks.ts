@@ -33,28 +33,23 @@ export function addBookmark(
   ayahId: number,
   verseRef: string,
   label?: string,
+  dbPath?: string,
 ): void {
-  const db = openDatabase();
-  try {
-    db.query(
-      "INSERT OR IGNORE INTO bookmarks (surah, ayah, verse_ref, label) VALUES (?, ?, ?, ?)",
-    ).run(surahId, ayahId, verseRef, label ?? null);
-  } finally {
-  }
+  const db = openDatabase(dbPath);
+  db.query(
+    "INSERT OR IGNORE INTO bookmarks (surah, ayah, verse_ref, label) VALUES (?, ?, ?, ?)",
+  ).run(surahId, ayahId, verseRef, label ?? null);
 }
 
 /**
  * Remove a bookmark for a specific verse.
  */
-export function removeBookmark(surahId: number, ayahId: number): void {
-  const db = openDatabase();
-  try {
-    db.query("DELETE FROM bookmarks WHERE surah = ? AND ayah = ?").run(
-      surahId,
-      ayahId,
-    );
-  } finally {
-  }
+export function removeBookmark(surahId: number, ayahId: number, dbPath?: string): void {
+  const db = openDatabase(dbPath);
+  db.query("DELETE FROM bookmarks WHERE surah = ? AND ayah = ?").run(
+    surahId,
+    ayahId,
+  );
 }
 
 /**
@@ -64,27 +59,25 @@ export function removeBookmark(surahId: number, ayahId: number): void {
 export function getBookmark(
   surahId: number,
   ayahId: number,
+  dbPath?: string,
 ): Bookmark | null {
-  const db = openDatabase();
-  try {
-    const row = db
-      .query(
-        "SELECT id, surah, ayah, verse_ref, label, created_at FROM bookmarks WHERE surah = ? AND ayah = ?",
-      )
-      .get(surahId, ayahId) as Record<string, unknown> | null;
+  const db = openDatabase(dbPath);
+  const row = db
+    .query(
+      "SELECT id, surah, ayah, verse_ref, label, created_at FROM bookmarks WHERE surah = ? AND ayah = ?",
+    )
+    .get(surahId, ayahId) as Record<string, unknown> | null;
 
-    if (!row) return null;
+  if (!row) return null;
 
-    return {
-      id: row["id"] as number,
-      surah: row["surah"] as number,
-      ayah: row["ayah"] as number,
-      verseRef: row["verse_ref"] as string,
-      label: row["label"] as string | null,
-      createdAt: row["created_at"] as string,
-    };
-  } finally {
-  }
+  return {
+    id: row["id"] as number,
+    surah: row["surah"] as number,
+    ayah: row["ayah"] as number,
+    verseRef: row["verse_ref"] as string,
+    label: row["label"] as string | null,
+    createdAt: row["created_at"] as string,
+  };
 }
 
 /**
@@ -96,52 +89,47 @@ export function toggleBookmark(
   ayahId: number,
   verseRef: string,
   label?: string,
+  dbPath?: string,
 ): boolean {
-  const existing = getBookmark(surahId, ayahId);
+  const existing = getBookmark(surahId, ayahId, dbPath);
   if (existing) {
-    removeBookmark(surahId, ayahId);
+    removeBookmark(surahId, ayahId, dbPath);
     return false;
   }
-  addBookmark(surahId, ayahId, verseRef, label);
+  addBookmark(surahId, ayahId, verseRef, label, dbPath);
   return true;
 }
 
 /**
  * Get all bookmarks, ordered by creation time (newest first).
  */
-export function getAllBookmarks(): Bookmark[] {
-  const db = openDatabase();
-  try {
-    const rows = db
-      .query(
-        "SELECT id, surah, ayah, verse_ref, label, created_at FROM bookmarks ORDER BY created_at DESC",
-      )
-      .all() as Record<string, unknown>[];
+export function getAllBookmarks(dbPath?: string): Bookmark[] {
+  const db = openDatabase(dbPath);
+  const rows = db
+    .query(
+      "SELECT id, surah, ayah, verse_ref, label, created_at FROM bookmarks ORDER BY created_at DESC",
+    )
+    .all() as Record<string, unknown>[];
 
-    return rows.map((row) => ({
-      id: row["id"] as number,
-      surah: row["surah"] as number,
-      ayah: row["ayah"] as number,
-      verseRef: row["verse_ref"] as string,
-      label: row["label"] as string | null,
-      createdAt: row["created_at"] as string,
-    }));
-  } finally {
-  }
+  return rows.map((row) => ({
+    id: row["id"] as number,
+    surah: row["surah"] as number,
+    ayah: row["ayah"] as number,
+    verseRef: row["verse_ref"] as string,
+    label: row["label"] as string | null,
+    createdAt: row["created_at"] as string,
+  }));
 }
 
 /**
  * Get all bookmarked ayah IDs for a specific surah.
  * Returns a Set for O(1) lookup when rendering verse indicators.
  */
-export function getBookmarkedAyahs(surahId: number): Set<number> {
-  const db = openDatabase();
-  try {
-    const rows = db
-      .query("SELECT ayah FROM bookmarks WHERE surah = ?")
-      .all(surahId) as Record<string, unknown>[];
+export function getBookmarkedAyahs(surahId: number, dbPath?: string): Set<number> {
+  const db = openDatabase(dbPath);
+  const rows = db
+    .query("SELECT ayah FROM bookmarks WHERE surah = ?")
+    .all(surahId) as Record<string, unknown>[];
 
-    return new Set(rows.map((row) => row["ayah"] as number));
-  } finally {
-  }
+  return new Set(rows.map((row) => row["ayah"] as number));
 }

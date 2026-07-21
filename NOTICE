@@ -1,0 +1,16 @@
+Bundled Quran text and translations
+
+quran.sh includes data from quran-json by Risan Bagja Pradana:
+https://github.com/risan/quran-json
+
+That data is licensed under the Creative Commons Attribution-ShareAlike 4.0
+International License (CC BY-SA 4.0):
+https://creativecommons.org/licenses/by-sa/4.0/
+
+quran.sh redistributes the text without substantive textual changes. Its build
+process combines the language and transliteration datasets and embeds them in
+the JavaScript bundle and standalone executable. The bundled data remains
+available under CC BY-SA 4.0.
+
+The quran.sh source code remains licensed under the MIT License as described
+in LICENSE.

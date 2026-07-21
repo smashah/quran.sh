@@ -10,43 +10,29 @@
  */
 import { Config, SearcherFactory, Query } from "@m31coding/fuzzy-search";
 import type { DynamicSearcher } from "@m31coding/fuzzy-search";
-import { createRequire } from "node:module";
-import type { VerseRef } from "./quran";
-
-// ---------------------------------------------------------------------------
-// Raw types (same shape as quran-json)
-// ---------------------------------------------------------------------------
-
-interface RawVerse {
-  id: number;
-  text: string;
-  translation: string;
-  transliteration: string;
-}
-
-interface RawChapter {
-  id: number;
-  name: string;
-  transliteration: string;
-  translation: string;
-  type: string;
-  total_verses: number;
-  verses: RawVerse[];
-}
+import { getAllVerseRefs, type VerseRef } from "./quran";
 
 // ---------------------------------------------------------------------------
 // Searcher singleton
 // ---------------------------------------------------------------------------
 
-const _require = createRequire(import.meta.url);
+const _searchers = new Map<string, DynamicSearcher<VerseRef, string>>();
+const SEARCHER_CACHE_LIMIT = 2;
 
-let _searcher: DynamicSearcher<VerseRef, string> | null = null;
+function rememberSearcher(language: string, searcher: DynamicSearcher<VerseRef, string>): void {
+  _searchers.delete(language);
+  _searchers.set(language, searcher);
+  if (_searchers.size > SEARCHER_CACHE_LIMIT) {
+    const oldest = _searchers.keys().next().value;
+    if (oldest) _searchers.delete(oldest);
+  }
+}
 
 /**
  * Whether the search index has been built and is ready for queries.
  */
-export function isIndexReady(): boolean {
-  return _searcher !== null;
+export function isIndexReady(language: string = "en"): boolean {
+  return _searchers.has(language);
 }
 
 /**
@@ -61,25 +47,8 @@ function createSearcher(): DynamicSearcher<VerseRef, string> {
 /**
  * Load all verse entities from quran-json.
  */
-function loadEntities(): VerseRef[] {
-  const chapters = _require("quran-json/dist/quran_en.json") as RawChapter[];
-  const entities: VerseRef[] = [];
-
-  for (const ch of chapters) {
-    for (const v of ch.verses) {
-      entities.push({
-        surahId: ch.id,
-        surahName: ch.name,
-        surahTransliteration: ch.transliteration,
-        verseId: v.id,
-        text: v.text,
-        translation: v.translation,
-        transliteration: v.transliteration || undefined,
-        reference: `${ch.id}:${v.id}`,
-      });
-    }
-  }
-  return entities;
+function loadEntities(language: string): VerseRef[] {
+  return getAllVerseRefs(language);
 }
 
 /**
@@ -99,24 +68,28 @@ function getTerms(e: VerseRef): string[] {
  * Trigger index building asynchronously (defers to next tick so the UI
  * can render an "Indexing…" indicator before the synchronous work blocks).
  */
-export function ensureSearcherAsync(): Promise<void> {
-  if (_searcher) return Promise.resolve();
+export function ensureSearcherAsync(language: string = "en"): Promise<void> {
+  if (_searchers.has(language)) return Promise.resolve();
   return new Promise((resolve) => {
     setTimeout(() => {
-      ensureSearcher();
+      ensureSearcher(language);
       resolve();
     }, 0);
   });
 }
 
-function ensureSearcher(): DynamicSearcher<VerseRef, string> {
-  if (_searcher) return _searcher;
+function ensureSearcher(language: string): DynamicSearcher<VerseRef, string> {
+  const cached = _searchers.get(language);
+  if (cached) {
+    rememberSearcher(language, cached);
+    return cached;
+  }
 
   const searcher = createSearcher();
-  const entities = loadEntities();
+  const entities = loadEntities(language);
   searcher.indexEntities(entities, (e) => e.reference, getTerms);
 
-  _searcher = searcher;
+  rememberSearcher(language, searcher);
   return searcher;
 }
 
@@ -128,15 +101,15 @@ function ensureSearcher(): DynamicSearcher<VerseRef, string> {
  * Force a full re-index, clearing any cached data.
  * Returns a promise so the UI can show feedback after completion.
  */
-export function reindex(): Promise<void> {
+export function reindex(language: string = "en"): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(() => {
-      _searcher = null;
+      _searchers.delete(language);
 
       const searcher = createSearcher();
-      const entities = loadEntities();
+      const entities = loadEntities(language);
       searcher.indexEntities(entities, (e) => e.reference, getTerms);
-      _searcher = searcher;
+      rememberSearcher(language, searcher);
 
       resolve();
     }, 0);
@@ -156,17 +129,18 @@ export interface FuzzySearchResult {
 /**
  * Perform a fuzzy search across all Quran verses.
  *
- * Searches translation (English), Arabic text, and transliteration.
+ * Searches the selected translation language, Arabic text, and transliteration.
  * Results are ranked by match quality (highest first).
  *
  * @param query - The search string.
  * @param topN  - Maximum results to return (default 20).
+ * @param language - Translation language to search (default: English).
  */
-export function fuzzySearch(query: string, topN = 20): FuzzySearchResult[] {
+export function fuzzySearch(query: string, topN = 20, language: string = "en"): FuzzySearchResult[] {
   const trimmed = query.trim();
   if (trimmed.length === 0) return [];
 
-  const searcher = ensureSearcher();
+  const searcher = ensureSearcher(language);
   const result = searcher.getMatches(new Query(trimmed, topN));
 
   return result.matches.map((m) => ({
