@@ -16,14 +16,11 @@ import { openDatabase } from "./db.ts";
  */
 export function getPreference(key: string): string | null {
   const db = openDatabase();
-  try {
-    const row = db
-      .query("SELECT value FROM user_preferences WHERE key = ?")
-      .get(key) as Record<string, unknown> | null;
+  const row = db
+    .query("SELECT value FROM user_preferences WHERE key = ?")
+    .get(key) as Record<string, unknown> | null;
 
-    return row ? (row["value"] as string) : null;
-  } finally {
-  }
+  return row ? (row["value"] as string) : null;
 }
 
 /**
@@ -32,11 +29,8 @@ export function getPreference(key: string): string | null {
  */
 export function setPreference(key: string, value: string): void {
   const db = openDatabase();
-  try {
-    db.query("INSERT OR REPLACE INTO user_preferences (key, value) VALUES (?, ?)").run(
-      key,
-      value,
-    );
-  } finally {
-  }
+  db.query("INSERT OR REPLACE INTO user_preferences (key, value) VALUES (?, ?)").run(
+    key,
+    value,
+  );
 }

@@ -27,7 +27,7 @@ export function Layout(props: LayoutProps) {
     let width = 100;
     if (sidebarVisible) width -= 25;
     if (panelVisible) width -= 25;
-    return `${width}%`;
+    return `${width}%` as `${number}%`;
   };
 
   return (
@@ -89,18 +89,18 @@ export function Layout(props: LayoutProps) {
           ["q",   "Quit"],
         ] as [string, string][]).map(([key, label]) => (
           <box key={key} flexDirection="row">
-            <text backgroundColor={theme.colors.highlight} color={theme.colors.background}>{` ${key} `}</text>
-            <text backgroundColor={theme.colors.statusBar} color={theme.colors.text}>{`${label} `}</text>
+            <text bg={theme.colors.highlight} fg={theme.colors.background}>{` ${key} `}</text>
+            <text bg={theme.colors.statusBar} fg={theme.colors.text}>{`${label} `}</text>
           </box>
         ))}
       </box>
 
       {/* Status bar — dynasty name + era + mode */}
       <box height={1} width="100%" backgroundColor={theme.colors.statusBar} flexDirection="row" justifyContent="space-between">
-        <text color={theme.colors.secondary}>
+        <text fg={theme.colors.secondary}>
           {` ${theme.ornaments.focusIcon} ${theme.name} — ${theme.era} ${theme.ornaments.focusIcon} `}
         </text>
-        <text color={theme.colors.muted}>
+        <text fg={theme.colors.muted}>
           {` Mode: ${mode.toUpperCase()}${mode === "auto" ? ` (${resolvedMode})` : ""} `}
         </text>
       </box>

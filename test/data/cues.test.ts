@@ -1,14 +1,13 @@
 import { describe, expect, test, afterAll } from "bun:test";
-import { setCue, getCue, getAllCues, clearCue } from "../cues";
-import { unlinkSync, existsSync } from "node:fs";
+import { setCue, getCue, getAllCues, clearCue } from "../../src/data/cues.ts";
+import { createTempDatabase } from "../helpers/temp-database.ts";
 
-const TEST_DB = "/tmp/test-cues.db";
+const testDatabase = createTempDatabase("quran-sh-cues");
+const TEST_DB = testDatabase.path;
 
 describe("Cues Data Layer", () => {
   afterAll(() => {
-    if (existsSync(TEST_DB)) {
-      unlinkSync(TEST_DB);
-    }
+    testDatabase.cleanup();
   });
 
   test("setCue and getCue", () => {

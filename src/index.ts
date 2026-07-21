@@ -8,7 +8,6 @@ import { logVerse, logSurah } from "./data/log.ts";
 import { getReadingStats } from "./data/streaks.ts";
 import { createRoot, createElement } from "@opentui/react";
 import { ConsolePosition, createCliRenderer } from "@opentui/core";
-import App from "./tui/app.tsx";
 
 // ---------------------------------------------------------------------------
 // Output formatting
@@ -154,43 +153,43 @@ Examples:
 
 import { openDatabase } from "./data/db.ts";
 
-async function main() {
+async function launchTui(): Promise<void> {
+  openDatabase();
+  const [{ default: App }, renderer] = await Promise.all([
+    import("./tui/app.tsx"),
+    createCliRenderer({
+      consoleOptions: {
+        position: ConsolePosition.BOTTOM,
+        sizePercent: 30,
+        colorInfo: "#00FFFF",
+        colorWarn: "#FFFF00",
+        colorError: "#FF0000",
+        startInDebugMode: false,
+      },
+    }),
+  ]);
+
+  createRoot(renderer).render(createElement(App));
+}
+
+async function main(): Promise<number | undefined> {
   const args = process.argv.slice(2);
   const command = args[0];
 
-  // Ensure DB is setup and migrations applied before executing any command
-  try {
-    openDatabase();
-  } catch (error) {
-    console.error("Failed to initialize database:", error);
-    process.exit(1);
-  }
-
   if (!command) {
-    // Launch TUI
-    const renderer = await createCliRenderer({
-      consoleOptions: {
-        position: ConsolePosition.BOTTOM, // Position on screen
-        sizePercent: 30, // Size as percentage of terminal
-        colorInfo: "#00FFFF", // Color for console.info
-        colorWarn: "#FFFF00", // Color for console.warn
-        colorError: "#FF0000", // Color for console.error
-        startInDebugMode: false, // Show file/line info in logs
-      },
-    });
-    // renderer.console.toggle()
-    createRoot(renderer).render(createElement(App));
+    await launchTui();
     return;
   }
 
   if (command === "--help" || command === "-h") {
     showUsage();
-    process.exit(0);
+    return 0;
   }
 
   if (command === "streak") {
+    openDatabase();
     handleStreak();
-    process.exit(0);
+    return 0;
   }
 
   if (command === "search") {
@@ -198,33 +197,41 @@ async function main() {
     const result = handleSearch(query);
     if (result.ok) {
       console.log(result.output);
-      process.exit(0);
+      return 0;
     } else {
       console.error(result.output);
-      process.exit(1);
+      return 1;
     }
   }
 
   if (command !== "read" && command !== "log") {
     console.error(`Error: Unknown command "${command}". Run with --help for usage.`);
-    process.exit(1);
+    return 1;
   }
 
   const ref = args[1];
   if (!ref) {
     console.error(`Error: Missing reference. Usage: quran.sh ${command} <ref>`);
-    process.exit(1);
+    return 1;
   }
 
+  if (command === "log") openDatabase();
   const handler = command === "read" ? handleRead : handleLog;
   const result = handler(ref);
   if (result.ok) {
     console.log(result.output);
-    process.exit(0);
+    return 0;
   } else {
     console.error(result.output);
-    process.exit(1);
+    return 1;
   }
 }
 
-main();
+main()
+  .then((exitCode) => {
+    if (exitCode !== undefined) process.exitCode = exitCode;
+  })
+  .catch((error: unknown) => {
+    console.error("quran.sh failed:", error);
+    process.exitCode = 1;
+  });

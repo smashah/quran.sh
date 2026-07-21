@@ -29,8 +29,8 @@ export function calculateStreaks(dates: string[], today?: string): { currentStre
     if (i === 0) {
       tempStreak = 1;
     } else {
-      const prev = new Date(sorted[i-1]);
-      const curr = new Date(sorted[i]);
+      const prev = new Date(sorted[i - 1]!);
+      const curr = new Date(sorted[i]!);
       const diffTime = curr.getTime() - prev.getTime();
       const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
       
@@ -48,8 +48,8 @@ export function calculateStreaks(dates: string[], today?: string): { currentStre
   // Calculate current streak
   // We need to know "today" to check if the streak is active.
   const now = today ? new Date(today) : new Date();
-  const todayStr = now.toISOString().split('T')[0];
-  const yesterday = new Date(now.getTime() - 86400000).toISOString().split('T')[0];
+  const todayStr = now.toISOString().split('T')[0]!;
+  const yesterday = new Date(now.getTime() - 86400000).toISOString().split('T')[0]!;
   
   const lastDate = sorted[sorted.length - 1];
   let currentStreak = 0;
@@ -58,8 +58,8 @@ export function calculateStreaks(dates: string[], today?: string): { currentStre
   if (lastDate === todayStr || lastDate === yesterday) {
      currentStreak = 1;
      for (let i = sorted.length - 1; i > 0; i--) {
-        const curr = new Date(sorted[i]);
-        const prev = new Date(sorted[i-1]);
+        const curr = new Date(sorted[i]!);
+        const prev = new Date(sorted[i - 1]!);
         const diffTime = curr.getTime() - prev.getTime();
         const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
         
@@ -76,9 +76,8 @@ export function calculateStreaks(dates: string[], today?: string): { currentStre
 
 export function getReadingStats(): StreakStats {
   const db = openDatabase();
-  try {
-    // Get all unique reading dates
-    const query = db.query(`
+  // Get all unique reading dates
+  const query = db.query(`
       SELECT 
         strftime('%Y-%m-%d', read_at) as date,
         COUNT(*) as count
@@ -87,22 +86,20 @@ export function getReadingStats(): StreakStats {
       ORDER BY date ASC
     `);
     
-    const rows = query.all() as { date: string, count: number }[];
-    const activityGrid: Record<string, number> = {};
-    for (const row of rows) {
-      activityGrid[row.date] = row.count;
-    }
-
-    const dates = rows.map(r => r.date);
-    const { currentStreak, longestStreak } = calculateStreaks(dates);
-
-    return {
-      currentStreak,
-      longestStreak,
-      totalDays: dates.length,
-      lastReadDate: dates.length > 0 ? dates[dates.length - 1] : null,
-      activityGrid
-    };
-  } finally {
+  const rows = query.all() as { date: string, count: number }[];
+  const activityGrid: Record<string, number> = {};
+  for (const row of rows) {
+    activityGrid[row.date] = row.count;
   }
+
+  const dates = rows.map(r => r.date);
+  const { currentStreak, longestStreak } = calculateStreaks(dates);
+
+  return {
+    currentStreak,
+    longestStreak,
+    totalDays: dates.length,
+    lastReadDate: dates.at(-1) ?? null,
+    activityGrid
+  };
 }

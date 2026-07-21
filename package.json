@@ -1,11 +1,22 @@
 {
   "name": "quran.sh",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "A fast, offline-first Quran CLI and TUI reader",
-  "module": "src/index.ts",
   "type": "module",
   "bin": {
     "quran": "dist/index.js"
+  },
+  "files": [
+    "dist/index.js",
+    "dist/*.scm",
+    "dist/*.wasm",
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "engines": {
+    "bun": ">=1.3.0"
   },
   "keywords": [
     "quran",
@@ -24,9 +35,12 @@
   "bugs": "https://github.com/smashah/quran.sh/issues",
   "homepage": "https://github.com/smashah/quran.sh",
   "scripts": {
-    "build": "bun build --minify --target bun --external @opentui/core --external @opentui/react --external yoga-layout --external react ./src/index.ts --outdir ./dist",
+    "build": "bun build --minify --target bun --external @opentui/core --external @opentui/react --external react ./src/index.ts --outdir ./dist",
     "build:binary": "bun build --compile --minify --sourcemap --format esm ./src/index.ts --outfile ./dist/quran",
-    "prepublishOnly": "bun run build",
+    "typecheck": "tsc --noEmit",
+    "check": "bun run typecheck && bun test && bun run build && bun run build:binary && bun run smoke:builds",
+    "prepublishOnly": "bun run typecheck && bun test && bun run build",
+    "smoke:builds": "bun run src/dev/smoke-builds.ts",
     "test": "bun test"
   },
   "publishConfig": {
@@ -34,33 +48,21 @@
   },
   "dependencies": {
     "@m31coding/fuzzy-search": "^2.0.0",
-    "@opentui/core": "^0.1.79",
-    "@opentui/react": "^0.1.77",
+    "@opentui/core": "0.4.5",
+    "@opentui/react": "0.4.5",
     "arabic-reshaper": "^1.1.0",
-    "bidi-js": "^1.0.3",
-    "jpeg-js": "^0.4.4",
-    "pixelmatch": "^7.1.0",
     "pngjs": "^7.0.0",
-    "quran-json": "^3.1.2",
-    "react": "^19.0.0",
-    "tesseract.js": "^5.0.0",
-    "yoga-layout": "^3.2.1"
-  },
-  "optionalDependencies": {
-    "@opentui/core-darwin-x64": "0.1.79",
-    "@opentui/core-darwin-arm64": "0.1.79",
-    "@opentui/core-linux-x64": "0.1.79",
-    "@opentui/core-linux-arm64": "0.1.79",
-    "@opentui/core-win32-x64": "0.1.79",
-    "@opentui/core-win32-arm64": "0.1.79"
+    "react": "^19.2.7"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@types/bun": "^1.3.14",
     "@types/pngjs": "^6.0.5",
-    "@types/react": "^19.0.0"
+    "@types/react": "^19.2.17",
+    "quran-json": "^3.1.2",
+    "typescript": "^5.9.3"
   },
   "overrides": {
-    "@opentui/core": "^0.1.79",
-    "yoga-layout": "^3.2.1"
+    "shell-quote": "1.10.0",
+    "ws": "8.21.1"
   }
 }

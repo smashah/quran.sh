@@ -49,14 +49,14 @@ export function Panel(props: PanelProps) {
         height={3}
         alignItems="center"
       >
-        <text color={props.activeTab === "bookmarks" ? theme.colors.highlight : theme.colors.muted} bold={props.activeTab === "bookmarks"}>
-          {tabTitle("bookmarks", "Bookmarks")}
+        <text fg={props.activeTab === "bookmarks" ? theme.colors.highlight : theme.colors.muted}>
+          {props.activeTab === "bookmarks" ? <strong>{tabTitle("bookmarks", "Bookmarks")}</strong> : tabTitle("bookmarks", "Bookmarks")}
         </text>
-        <text color={props.activeTab === "cues" ? theme.colors.highlight : theme.colors.muted} bold={props.activeTab === "cues"}>
-          {tabTitle("cues", "Cues")}
+        <text fg={props.activeTab === "cues" ? theme.colors.highlight : theme.colors.muted}>
+          {props.activeTab === "cues" ? <strong>{tabTitle("cues", "Cues")}</strong> : tabTitle("cues", "Cues")}
         </text>
-        <text color={props.activeTab === "reflections" ? theme.colors.highlight : theme.colors.muted} bold={props.activeTab === "reflections"}>
-          {tabTitle("reflections", "Reflections")}
+        <text fg={props.activeTab === "reflections" ? theme.colors.highlight : theme.colors.muted}>
+          {props.activeTab === "reflections" ? <strong>{tabTitle("reflections", "Reflections")}</strong> : tabTitle("reflections", "Reflections")}
         </text>
       </box>
 
@@ -64,8 +64,8 @@ export function Panel(props: PanelProps) {
       <scrollbox
         flexGrow={1}
         width="100%"
-        scrollable={true}
-        scrollbar={true}
+        scrollY={true}
+        scrollbarOptions={{ visible: true }}
         focusable={true}
         focused={props.focused}
         viewportCulling={true}
@@ -73,7 +73,7 @@ export function Panel(props: PanelProps) {
       >
         {currentItems.length === 0 && (
           <box padding={1} justifyContent="center">
-            <text color={theme.colors.muted}>No items found</text>
+            <text fg={theme.colors.muted}>No items found</text>
           </box>
         )}
         {currentItems.map((item, i) => {
@@ -102,14 +102,11 @@ export function Panel(props: PanelProps) {
               paddingRight={1}
               backgroundColor={isSelected && props.focused ? theme.colors.border : "transparent"}
             >
-              <text
-                color={isSelected ? theme.colors.highlight : theme.colors.text}
-                bold={isSelected}
-              >
-                {isSelected ? `${theme.ornaments.verseMarker} ` : "  "}{label}
+              <text fg={isSelected ? theme.colors.highlight : theme.colors.text}>
+                {isSelected ? <strong>{`${theme.ornaments.verseMarker} ${label}`}</strong> : `  ${label}`}
               </text>
               {subLabel && (
-                <text color={theme.colors.muted}>
+                <text fg={theme.colors.muted}>
                   {`  ${subLabel}`}
                 </text>
               )}
@@ -120,7 +117,7 @@ export function Panel(props: PanelProps) {
 
       {/* Footer / Help */}
       <box height={1} paddingLeft={1} backgroundColor={theme.colors.statusBar}>
-        <text color={theme.colors.muted} size="small">
+        <text fg={theme.colors.muted}>
           {"\u2190\u2192 Tab  \u2191\u2193 Item  Ent Jump"}
         </text>
       </box>

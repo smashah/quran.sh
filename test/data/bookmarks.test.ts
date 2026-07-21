@@ -1,28 +1,28 @@
-import { describe, expect, it, beforeEach, afterEach } from "bun:test";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-
-// ---------------------------------------------------------------------------
-// Test-specific DB setup
-// ---------------------------------------------------------------------------
-
-// We need to control the DB path for tests. We'll do this by setting
-// XDG_DATA_HOME to a temp directory before importing the module.
-
-const TEST_DIR = join(tmpdir(), "quran-sh-bookmark-test");
-const TEST_DB_PATH = join(TEST_DIR, "quran.sh", "quran.db");
-
-// Set env BEFORE importing modules that use openDatabase()
-process.env["XDG_DATA_HOME"] = TEST_DIR;
-
+import { describe, expect, it, beforeEach, afterEach, afterAll } from "bun:test";
 import {
-  addBookmark,
-  removeBookmark,
-  getBookmark,
-  toggleBookmark,
-  getAllBookmarks,
-  getBookmarkedAyahs,
+  addBookmark as addBookmarkData,
+  removeBookmark as removeBookmarkData,
+  getBookmark as getBookmarkData,
+  toggleBookmark as toggleBookmarkData,
+  getAllBookmarks as getAllBookmarksData,
+  getBookmarkedAyahs as getBookmarkedAyahsData,
 } from "../../src/data/bookmarks";
+import { openDatabase } from "../../src/data/db.ts";
+import { createTempDatabase } from "../helpers/temp-database.ts";
+
+const testDatabase = createTempDatabase("quran-sh-bookmarks");
+const TEST_DB_PATH = testDatabase.path;
+
+const addBookmark = (surah: number, ayah: number, verseRef: string, label?: string) =>
+  addBookmarkData(surah, ayah, verseRef, label, TEST_DB_PATH);
+const removeBookmark = (surah: number, ayah: number) =>
+  removeBookmarkData(surah, ayah, TEST_DB_PATH);
+const getBookmark = (surah: number, ayah: number) =>
+  getBookmarkData(surah, ayah, TEST_DB_PATH);
+const toggleBookmark = (surah: number, ayah: number, verseRef: string, label?: string) =>
+  toggleBookmarkData(surah, ayah, verseRef, label, TEST_DB_PATH);
+const getAllBookmarks = () => getAllBookmarksData(TEST_DB_PATH);
+const getBookmarkedAyahs = (surah: number) => getBookmarkedAyahsData(surah, TEST_DB_PATH);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -32,8 +32,7 @@ function cleanDb(): void {
   // Truncate the bookmarks table rather than deleting the file,
   // because WAL journaling can hold data across file unlink/recreate cycles
   try {
-    const { openDatabase } = require("../../src/data/db");
-    const db = openDatabase();
+    const db = openDatabase(TEST_DB_PATH);
     db.exec("DELETE FROM bookmarks");
   } catch {
     // If DB doesn't exist yet, that's fine
@@ -51,6 +50,10 @@ describe("bookmarks", () => {
 
   afterEach(() => {
     cleanDb();
+  });
+
+  afterAll(() => {
+    testDatabase.cleanup();
   });
 
   // -------------------------------------------------------------------------

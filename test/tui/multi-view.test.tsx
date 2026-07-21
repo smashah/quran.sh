@@ -8,7 +8,7 @@ describe("Multi-View Reader", () => {
   test("renders Arabic by default (or when enabled)", async () => {
     const { captureSpans, renderOnce } = await testRender(
       <ModeProvider><ThemeProvider>
-        <Reader surahId={1} focused={true} showArabic={true} />
+        <Reader surahId={1} focusedPane="arabic" showArabic={true} />
       </ThemeProvider></ModeProvider>,
       {}
     );
@@ -26,7 +26,7 @@ describe("Multi-View Reader", () => {
   test("hides Arabic when disabled", async () => {
     const { captureSpans, renderOnce } = await testRender(
       <ModeProvider><ThemeProvider>
-        <Reader surahId={1} focused={true} showArabic={false} />
+        <Reader surahId={1} focusedPane="translation" showArabic={false} />
       </ThemeProvider></ModeProvider>,
       {}
     );
@@ -45,7 +45,7 @@ describe("Multi-View Reader", () => {
   test("shows transliteration when enabled", async () => {
     const { captureSpans, renderOnce } = await testRender(
       <ModeProvider><ThemeProvider>
-        <Reader surahId={1} focused={true} showTransliteration={true} />
+        <Reader surahId={1} focusedPane="transliteration" showTransliteration={true} />
       </ThemeProvider></ModeProvider>,
       {}
     );
@@ -62,7 +62,7 @@ describe("Multi-View Reader", () => {
   test("switches language to French", async () => {
     const { captureSpans, renderOnce } = await testRender(
       <ModeProvider><ThemeProvider>
-        <Reader surahId={1} focused={true} language="fr" />
+        <Reader surahId={1} focusedPane="translation" language="fr" />
       </ThemeProvider></ModeProvider>,
       {}
     );

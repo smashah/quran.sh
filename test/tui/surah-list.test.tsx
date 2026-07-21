@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
+import { act } from "react";
 import { SurahList } from "../../src/tui/components/surah-list";
 import { ThemeProvider } from "../../src/tui/theme";
 import { ModeProvider } from "../../src/tui/mode";
 
 describe("SurahList", () => {
   test("renders the list of surahs", async () => {
-    const { captureSpans, renderOnce } = await testRender(
+    const { captureSpans, renderOnce, renderer } = await testRender(
       <ModeProvider><ThemeProvider>
         <SurahList />
       </ThemeProvider></ModeProvider>,
@@ -22,6 +23,9 @@ describe("SurahList", () => {
     // Check for some expected content
     expect(output).toContain("1. Al-Fatihah");
     expect(output).toContain("2. Al-Baqarah");
+    await act(async () => {
+      renderer.destroy();
+    });
   });
 
   test("handles navigation and selection", async () => {
@@ -32,7 +36,7 @@ describe("SurahList", () => {
 
     const { renderer, mockInput, renderOnce } = await testRender(
       <ModeProvider><ThemeProvider>
-        <SurahList onSelect={handleSelect} initialSelectedId={1} />
+        <SurahList onSelect={handleSelect} selectedId={1} />
       </ThemeProvider></ModeProvider>,
       {}
     );
@@ -63,26 +67,35 @@ describe("SurahList", () => {
     }
 
     // Move down to second item
-    mockInput.pressArrow("down");
-    await new Promise(r => setTimeout(r, 50));
-    await renderOnce();
+    await act(async () => {
+      mockInput.pressArrow("down");
+      await renderOnce();
+    });
     
     // Press Enter to select the second item
-    mockInput.pressEnter();
-    await new Promise(r => setTimeout(r, 50));
-    await renderOnce();
+    await act(async () => {
+      mockInput.pressEnter();
+      await renderOnce();
+    });
 
     // We expect selectedId to be updated to 2 (Al-Baqarah)
     expect(selectedId).toBe(2);
 
     // Move up to first item
-    mockInput.pressArrow("up");
-    await renderOnce();
+    await act(async () => {
+      mockInput.pressArrow("up");
+      await renderOnce();
+    });
 
     // Press Enter
-    mockInput.pressEnter();
-    await renderOnce();
+    await act(async () => {
+      mockInput.pressEnter();
+      await renderOnce();
+    });
 
     expect(selectedId).toBe(1);
+    await act(async () => {
+      renderer.destroy();
+    });
   });
 });

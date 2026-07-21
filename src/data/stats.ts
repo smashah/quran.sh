@@ -56,9 +56,8 @@ function buildWhereClause(period: StatsPeriod, sessionStart?: string): { clause:
 /**
  * Get reading statistics for a given time period.
  */
-export function getPeriodStats(period: StatsPeriod, sessionStart?: string): PeriodStats {
-    const db = openDatabase();
-    try {
+export function getPeriodStats(period: StatsPeriod, sessionStart?: string, dbPath?: string): PeriodStats {
+    const db = openDatabase(dbPath);
         const { clause, params } = buildWhereClause(period, sessionStart);
 
         // Aggregate stats in one query
@@ -91,12 +90,10 @@ export function getPeriodStats(period: StatsPeriod, sessionStart?: string): Peri
             }
         }
 
-        return {
+    return {
             versesRead: row.versesRead,
             uniqueVerses: row.uniqueVerses,
             surahsTouched: row.surahsTouched,
             surahsCompleted,
-        };
-    } finally {
-    }
+    };
 }

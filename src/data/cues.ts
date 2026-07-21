@@ -38,12 +38,9 @@ export function setCue(
   }
 
   const db = openDatabase(dbPath);
-  try {
-    db.query(
-      "INSERT OR REPLACE INTO cues (slot, surah, ayah, verse_ref) VALUES (?, ?, ?, ?)",
-    ).run(slot, surahId, ayahId, verseRef);
-  } finally {
-  }
+  db.query(
+    "INSERT OR REPLACE INTO cues (slot, surah, ayah, verse_ref) VALUES (?, ?, ?, ?)",
+  ).run(slot, surahId, ayahId, verseRef);
 }
 
 /**
@@ -52,22 +49,19 @@ export function setCue(
  */
 export function getCue(slot: number, dbPath?: string): Cue | null {
   const db = openDatabase(dbPath);
-  try {
-    const row = db
-      .query("SELECT slot, surah, ayah, verse_ref, set_at FROM cues WHERE slot = ?")
-      .get(slot) as Record<string, unknown> | null;
+  const row = db
+    .query("SELECT slot, surah, ayah, verse_ref, set_at FROM cues WHERE slot = ?")
+    .get(slot) as Record<string, unknown> | null;
 
-    if (!row) return null;
+  if (!row) return null;
 
-    return {
-      slot: row["slot"] as number,
-      surah: row["surah"] as number,
-      ayah: row["ayah"] as number,
-      verseRef: row["verse_ref"] as string,
-      setAt: row["set_at"] as string,
-    };
-  } finally {
-  }
+  return {
+    slot: row["slot"] as number,
+    surah: row["surah"] as number,
+    ayah: row["ayah"] as number,
+    verseRef: row["verse_ref"] as string,
+    setAt: row["set_at"] as string,
+  };
 }
 
 /**
@@ -75,20 +69,17 @@ export function getCue(slot: number, dbPath?: string): Cue | null {
  */
 export function getAllCues(dbPath?: string): Cue[] {
   const db = openDatabase(dbPath);
-  try {
-    const rows = db
-      .query("SELECT slot, surah, ayah, verse_ref, set_at FROM cues ORDER BY slot ASC")
-      .all() as Record<string, unknown>[];
+  const rows = db
+    .query("SELECT slot, surah, ayah, verse_ref, set_at FROM cues ORDER BY slot ASC")
+    .all() as Record<string, unknown>[];
 
-    return rows.map((row) => ({
-      slot: row["slot"] as number,
-      surah: row["surah"] as number,
-      ayah: row["ayah"] as number,
-      verseRef: row["verse_ref"] as string,
-      setAt: row["set_at"] as string,
-    }));
-  } finally {
-  }
+  return rows.map((row) => ({
+    slot: row["slot"] as number,
+    surah: row["surah"] as number,
+    ayah: row["ayah"] as number,
+    verseRef: row["verse_ref"] as string,
+    setAt: row["set_at"] as string,
+  }));
 }
 
 /**
@@ -96,8 +87,5 @@ export function getAllCues(dbPath?: string): Cue[] {
  */
 export function clearCue(slot: number, dbPath?: string): void {
   const db = openDatabase(dbPath);
-  try {
-    db.query("DELETE FROM cues WHERE slot = ?").run(slot);
-  } finally {
-  }
+  db.query("DELETE FROM cues WHERE slot = ?").run(slot);
 }

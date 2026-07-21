@@ -25,7 +25,7 @@ export function ImageWarningDialog({ visible, onConfirm }: ImageWarningDialogPro
       top="35%"
       left="15%"
       width="70%"
-      height={11}
+      height={13}
       borderStyle={theme.borderStyleFocused}
       customBorderChars={theme.borderChars}
       borderColor={theme.colors.highlight}
@@ -42,6 +42,9 @@ export function ImageWarningDialog({ visible, onConfirm }: ImageWarningDialogPro
         </text>
         <text fg={theme.colors.muted} marginBottom={1}>
           This rendering engine maps Arabic calligraphy to physical terminal cells using a high-density Braille matrix (8x resolution).
+        </text>
+        <text fg={theme.colors.muted} marginBottom={1}>
+          Verse PNGs are fetched from surahquran.com when needed and cached in memory for this session. The request reveals your IP address to that service.
         </text>
         <text fg={theme.colors.secondary} attributes={TextAttributes.BOLD} marginBottom={1}>
           TIP: If the rendering looks huge or illegible, you must ZOOM OUT your terminal window

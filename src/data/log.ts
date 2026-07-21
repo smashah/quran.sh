@@ -31,12 +31,9 @@ function insertLogEntry(
   verseRef: string,
 ): void {
   const db = openDatabase();
-  try {
-    db.query(
-      "INSERT INTO reading_log (surah, ayah, verse_ref) VALUES (?, ?, ?)",
-    ).run(surah, ayah, verseRef);
-  } finally {
-  }
+  db.query(
+    "INSERT INTO reading_log (surah, ayah, verse_ref) VALUES (?, ?, ?)",
+  ).run(surah, ayah, verseRef);
 }
 
 // ---------------------------------------------------------------------------
@@ -80,30 +77,27 @@ function buildDeleteClause(period: ResetPeriod, sessionStart?: string): { clause
  */
 export function deleteReadingLog(period: ResetPeriod, sessionStart?: string): LogResult {
   const db = openDatabase();
-  try {
-    const { clause, params } = buildDeleteClause(period, sessionStart);
+  const { clause, params } = buildDeleteClause(period, sessionStart);
 
-    // Count rows to be deleted first
-    const countRow = db.query(
-      `SELECT COUNT(*) as cnt FROM reading_log ${clause}`,
-    ).get(...params) as { cnt: number } | null;
-    const count = countRow?.cnt ?? 0;
+  // Count rows to be deleted first
+  const countRow = db.query(
+    `SELECT COUNT(*) as cnt FROM reading_log ${clause}`,
+  ).get(...params) as { cnt: number } | null;
+  const count = countRow?.cnt ?? 0;
 
-    if (count === 0) {
-      return {
-        ok: true,
-        message: `No reading data to reset for "${RESET_LABELS[period]}".`,
-      };
-    }
-
-    db.query(`DELETE FROM reading_log ${clause}`).run(...params);
-
+  if (count === 0) {
     return {
       ok: true,
-      message: `✓ Reset ${count} reading log entries for "${RESET_LABELS[period]}".`,
+      message: `No reading data to reset for "${RESET_LABELS[period]}".`,
     };
-  } finally {
   }
+
+  db.query(`DELETE FROM reading_log ${clause}`).run(...params);
+
+  return {
+    ok: true,
+    message: `✓ Reset ${count} reading log entries for "${RESET_LABELS[period]}".`,
+  };
 }
 
 /**
@@ -131,13 +125,10 @@ export function logVerse(ref: string): LogResult {
  */
 export function isSurahLoggedToday(surahId: number, totalVerses: number): boolean {
   const db = openDatabase();
-  try {
-    const row = db.query(
-      "SELECT COUNT(DISTINCT ayah) as cnt FROM reading_log WHERE surah = ? AND date(read_at) = date('now')",
-    ).get(surahId) as { cnt: number } | null;
-    return (row?.cnt ?? 0) >= totalVerses;
-  } finally {
-  }
+  const row = db.query(
+    "SELECT COUNT(DISTINCT ayah) as cnt FROM reading_log WHERE surah = ? AND date(read_at) = date('now')",
+  ).get(surahId) as { cnt: number } | null;
+  return (row?.cnt ?? 0) >= totalVerses;
 }
 
 /**
@@ -155,20 +146,17 @@ export function logSurah(surah: Surah): LogResult {
   }
 
   const db = openDatabase();
-  try {
-    const stmt = db.query(
-      "INSERT INTO reading_log (surah, ayah, verse_ref) VALUES (?, ?, ?)",
-    );
+  const stmt = db.query(
+    "INSERT INTO reading_log (surah, ayah, verse_ref) VALUES (?, ?, ?)",
+  );
 
-    const transaction = db.transaction(() => {
-      for (const verse of surah.verses) {
-        stmt.run(surah.id, verse.id, `${surah.id}:${verse.id}`);
-      }
-    });
+  const transaction = db.transaction(() => {
+    for (const verse of surah.verses) {
+      stmt.run(surah.id, verse.id, `${surah.id}:${verse.id}`);
+    }
+  });
 
-    transaction();
-  } finally {
-  }
+  transaction();
 
   return {
     ok: true,
@@ -186,21 +174,18 @@ export function logSurah(surah: Surah): LogResult {
  */
 export function getCompletedSurahIds(): Set<number> {
   const db = openDatabase();
-  try {
-    const rows = db.query(
-      "SELECT surah, COUNT(DISTINCT ayah) as cnt FROM reading_log GROUP BY surah",
-    ).all() as { surah: number; cnt: number }[];
+  const rows = db.query(
+    "SELECT surah, COUNT(DISTINCT ayah) as cnt FROM reading_log GROUP BY surah",
+  ).all() as { surah: number; cnt: number }[];
 
-    const completed = new Set<number>();
-    for (const row of rows) {
-      const surah = getSurahMeta(row.surah);
-      if (surah && row.cnt >= surah.totalVerses) {
-        completed.add(row.surah);
-      }
+  const completed = new Set<number>();
+  for (const row of rows) {
+    const surah = getSurahMeta(row.surah);
+    if (surah && row.cnt >= surah.totalVerses) {
+      completed.add(row.surah);
     }
-    return completed;
-  } finally {
   }
+  return completed;
 }
 
 /**
@@ -208,11 +193,8 @@ export function getCompletedSurahIds(): Set<number> {
  */
 export function getReadVerseIds(surahId: number): Set<number> {
   const db = openDatabase();
-  try {
-    const rows = db.query(
-      "SELECT DISTINCT ayah FROM reading_log WHERE surah = ?",
-    ).all(surahId) as { ayah: number }[];
-    return new Set(rows.map((r) => r.ayah));
-  } finally {
-  }
+  const rows = db.query(
+    "SELECT DISTINCT ayah FROM reading_log WHERE surah = ?",
+  ).all(surahId) as { ayah: number }[];
+  return new Set(rows.map((r) => r.ayah));
 }
