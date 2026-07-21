@@ -430,13 +430,22 @@ export function createResourcePackManager(rootDirectory: string): ResourcePackMa
         try: async () => {
           cancelled(signal);
           const extension = manifest.format === "sqlite" ? "sqlite" : "json";
-          await Promise.all([
-            Bun.write(join(staging, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n"),
-            copyFile(dataPath, join(staging, `data.${extension}`)),
-          ]);
-          cancelled(signal);
-          await createNormalizedIndex(join(staging, `data.${extension}`), manifest.format, manifest.kind, join(staging, "index.sqlite"));
-          cancelled(signal);
+          const temporaryIndex = `${staging}.index.sqlite`;
+          try {
+            // Build outside the promoted directory. Windows cannot rename a
+            // directory containing a recently opened SQLite file even after
+            // sqlite3_close; the copied, never-opened index remains atomic.
+            await createNormalizedIndex(dataPath, manifest.format, manifest.kind, temporaryIndex);
+            cancelled(signal);
+            await Promise.all([
+              Bun.write(join(staging, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n"),
+              copyFile(dataPath, join(staging, `data.${extension}`)),
+              copyFile(temporaryIndex, join(staging, "index.sqlite")),
+            ]);
+            cancelled(signal);
+          } finally {
+            await rm(temporaryIndex, { force: true }).catch(() => {});
+          }
           await mkdir(dirname(finalDirectory), { recursive: true });
           await rename(staging, finalDirectory);
           return installedAt(finalDirectory);
