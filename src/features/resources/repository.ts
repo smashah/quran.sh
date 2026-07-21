@@ -128,16 +128,20 @@ export async function openResourceRepository(pack: InstalledResourcePack): Promi
   }
 
   const database = new Database(pack.indexPath ?? pack.dataPath, { readonly: true, strict: true });
-  const tables = database.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[];
+  const tableQuery = database.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'");
+  const tables = tableQuery.all() as { name: string }[];
+  tableQuery.finalize();
   const normalizedTable = `resource_${pack.manifest.kind.replaceAll("-", "_")}`;
   const table = tables.find(({ name }) => name === normalizedTable)?.name ?? tables[0]?.name;
   if (!table || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(table)) {
     database.close();
     return createMemoryRepository(pack.manifest.kind, []);
   }
-  const columns = (database.query(`PRAGMA table_info("${table}")`).all() as { name: string }[])
+  const columnQuery = database.query(`PRAGMA table_info("${table}")`);
+  const columns = (columnQuery.all() as { name: string }[])
     .map(({ name }) => name)
     .filter((name) => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name));
+  columnQuery.finalize();
   const pick = (...candidates: string[]) => candidates.find((candidate) => columns.includes(candidate));
   const verseColumn = pick("verse_key", "verseKey", "ayah_key", "ayahKey");
   const wordColumn = pick("location", "word_key", "wordKey");
@@ -147,8 +151,9 @@ export async function openResourceRepository(pack: InstalledResourcePack): Promi
   const quote = (identifier: string) => `"${identifier}"`;
   const queryBy = (column: string | undefined, value: string, limit = 500): ResourceRow[] => {
     if (closed || !column) return [];
-    const rows = database.query(`SELECT * FROM "${table}" WHERE ${quote(column)} = ? LIMIT ?`).all(value, Math.max(0, Math.min(500, limit)));
-    return rowsFromJson(rows, pack);
+    const statement = database.query(`SELECT * FROM "${table}" WHERE ${quote(column)} = ? LIMIT ?`);
+    try { return rowsFromJson(statement.all(value, Math.max(0, Math.min(500, limit))), pack); }
+    finally { statement.finalize(); }
   };
   return {
     kind: pack.manifest.kind,
@@ -159,8 +164,9 @@ export async function openResourceRepository(pack: InstalledResourcePack): Promi
       const maximum = Math.max(0, Math.min(200, limit));
       const where = searchableColumns.map((column) => `${quote(column)} LIKE ? ESCAPE '\\'`).join(" OR ");
       const escaped = query.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
-      const rawRows = database.query(`SELECT * FROM "${table}" WHERE ${where} LIMIT ?`).all(...searchableColumns.map(() => `%${escaped}%`), maximum);
-      return rowsFromJson(rawRows, pack);
+      const statement = database.query(`SELECT * FROM "${table}" WHERE ${where} LIMIT ?`);
+      try { return rowsFromJson(statement.all(...searchableColumns.map(() => `%${escaped}%`), maximum), pack); }
+      finally { statement.finalize(); }
     },
     close() {
       if (closed) return;

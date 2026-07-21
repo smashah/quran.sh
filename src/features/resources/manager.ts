@@ -250,26 +250,41 @@ async function createNormalizedIndex(sourcePath: string, format: ResourcePackFor
     CREATE INDEX "${table}_root" ON "${table}" (root);
     CREATE INDEX "${table}_lemma" ON "${table}" (lemma);`);
     const insert = target.prepare(`INSERT INTO "${table}" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-    const writeRows = target.transaction((rows: Iterable<Record<string, unknown>>) => {
+    const writeRows = (rows: Iterable<Record<string, unknown>>) => {
       for (const row of rows) insert.run(
         normalizedValue(row, "verse_key", "verseKey", "ayah_key", "ayahKey"), normalizedValue(row, "location", "word_key", "wordKey"),
         normalizedValue(row, "text", "translation", "tafsir", "content", "word"), normalizedValue(row, "root"), normalizedValue(row, "lemma"),
         normalizedValue(row, "pos", "part_of_speech"), normalizedValue(row, "topic", "name"), normalizedValue(row, "page_number", "page"),
         normalizedValue(row, "line_number", "line"), normalizedValue(row, "audio_url", "audioUrl"), JSON.stringify(compactResourceRow(row)),
       );
-    });
-    if (format === "json") {
-      const parsed: unknown = JSON.parse(await readFile(sourcePath, "utf8"));
-      writeRows(coordinateObjects(parsed));
-    } else if (source) {
-      const tables = source.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[];
-      for (const { name } of tables) {
-        const quoted = name.replaceAll('"', '""');
-        writeRows(source.query(`SELECT * FROM "${quoted}"`).iterate() as Iterable<Record<string, unknown>>);
+    };
+    target.exec("BEGIN IMMEDIATE");
+    try {
+      if (format === "json") {
+        const parsed: unknown = JSON.parse(await readFile(sourcePath, "utf8"));
+        writeRows(coordinateObjects(parsed));
+      } else if (source) {
+        const tableQuery = source.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'");
+        const tables = tableQuery.all() as { name: string }[];
+        tableQuery.finalize();
+        for (const { name } of tables) {
+          const quoted = name.replaceAll('"', '""');
+          const rows = source.query(`SELECT * FROM "${quoted}"`);
+          try { writeRows(rows.iterate() as Iterable<Record<string, unknown>>); }
+          finally { rows.finalize(); }
+        }
       }
+      target.exec("COMMIT");
+    } catch (cause) {
+      target.exec("ROLLBACK");
+      throw cause;
+    } finally {
+      insert.finalize();
     }
     if (kind === "mushaf-layout") {
-      const coverage = target.query(`SELECT COUNT(DISTINCT verse_key) AS verses, COUNT(DISTINCT page) AS pages FROM "${table}" WHERE verse_key IS NOT NULL AND page IS NOT NULL AND line IS NOT NULL`).get() as { verses: number; pages: number };
+      const coverageQuery = target.query(`SELECT COUNT(DISTINCT verse_key) AS verses, COUNT(DISTINCT page) AS pages FROM "${table}" WHERE verse_key IS NOT NULL AND page IS NOT NULL AND line IS NOT NULL`);
+      const coverage = coverageQuery.get() as { verses: number; pages: number };
+      coverageQuery.finalize();
       if (coverage.verses !== 6_236 || coverage.pages !== 604) {
         throw new ResourcePackError("invalid_content", `Mushaf layout coverage is incomplete: ${coverage.verses}/6236 ayat across ${coverage.pages}/604 pages`, false);
       }
@@ -291,19 +306,28 @@ async function validateContent(path: string, format: ResourcePackFormat, signal?
 
     const database = new Database(path, { readonly: true, strict: true });
     try {
-      const result = database.query("PRAGMA quick_check").get() as Record<string, unknown> | null;
+      const quickCheck = database.query("PRAGMA quick_check");
+      const result = quickCheck.get() as Record<string, unknown> | null;
+      quickCheck.finalize();
       if (!result || !Object.values(result).includes("ok")) {
         throw new Error("SQLite quick_check did not return ok");
       }
-      const tables = database.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[];
+      const tableQuery = database.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'");
+      const tables = tableQuery.all() as { name: string }[];
+      tableQuery.finalize();
       let coordinateRows = 0;
       let rowCount = 0;
       for (const { name } of tables) {
         const quoted = name.replaceAll('"', '""');
-        for (const row of database.query(`SELECT * FROM "${quoted}"`).iterate()) {
-          coordinateRows += validateResourceObject(row);
-          rowCount += 1;
-          if (rowCount % 1_000 === 0) cancelled(signal);
+        const rows = database.query(`SELECT * FROM "${quoted}"`);
+        try {
+          for (const row of rows.iterate()) {
+            coordinateRows += validateResourceObject(row);
+            rowCount += 1;
+            if (rowCount % 1_000 === 0) cancelled(signal);
+          }
+        } finally {
+          rows.finalize();
         }
       }
       if (coordinateRows === 0) throw new Error("Resource pack contains no canonical Quran coordinates");
