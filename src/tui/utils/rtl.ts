@@ -50,6 +50,15 @@ export const RTL_STRATEGIES = [
 ] as const;
 
 export type RtlStrategy = (typeof RTL_STRATEGIES)[number];
+export const DEFAULT_RTL_STRATEGY: RtlStrategy = "reshaped_reversed";
+
+export function isRtlStrategy(value: unknown): value is RtlStrategy {
+  return typeof value === "string" && (RTL_STRATEGIES as readonly string[]).includes(value);
+}
+
+export function resolveRtlStrategy(value: unknown): RtlStrategy {
+  return isRtlStrategy(value) ? value : DEFAULT_RTL_STRATEGY;
+}
 
 /** Human-readable labels shown in the calibration dialog. */
 export const RTL_STRATEGY_LABELS: Record<RtlStrategy, string> = {
@@ -99,9 +108,24 @@ function stripDiacritics(text: string): string {
   return text.replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED\u08D3-\u08FF]/g, "");
 }
 
-/** Reverse character order. */
+const arabicGraphemeSegmenter = new Intl.Segmenter("ar", { granularity: "grapheme" });
+
+export function splitArabicGraphemes(text: string): string[] {
+  const clusters: string[] = [];
+  for (const { segment } of arabicGraphemeSegmenter.segment(text)) {
+    const previous = clusters.at(-1);
+    if (/^[\u06E5\u06E6]/u.test(segment) && previous && !/\s$/u.test(previous)) {
+      clusters[clusters.length - 1] = previous + segment;
+    } else {
+      clusters.push(segment);
+    }
+  }
+  return clusters;
+}
+
+/** Reverse visual graphemes while keeping every combining mark on its base. */
 function reverse(text: string): string {
-  return [...text].reverse().join("");
+  return splitArabicGraphemes(text).reverse().join("");
 }
 
 /**
@@ -129,13 +153,45 @@ export function wrapAndReverse(text: string, width?: number): string {
  * Measure the visual width of a string.
  * Combining marks (zero-width) are not counted.
  */
-function visualWidth(str: string): number {
+export function getVisualWidth(str: string): number {
   let w = 0;
   for (const ch of str) {
     const code = ch.codePointAt(0)!;
-    if (!isCombiningMark(code)) w += 1;
+    if (!isCombiningMark(code) && !isBidiControl(code)) w += 1;
   }
   return w;
+}
+
+function isBidiControl(code: number): boolean {
+  return code === 0x200e
+    || code === 0x200f
+    || (code >= 0x202a && code <= 0x202e)
+    || (code >= 0x2066 && code <= 0x2069);
+}
+
+export function wrapTerminalWords(text: string, maxWidth: number): string[] {
+  const width = Math.max(1, Math.floor(maxWidth));
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = "";
+  let lineWidth = 0;
+
+  for (const word of words) {
+    const wordWidth = getVisualWidth(word);
+    if (!line) {
+      line = word;
+      lineWidth = wordWidth;
+    } else if (lineWidth + 1 + wordWidth <= width) {
+      line += ` ${word}`;
+      lineWidth += 1 + wordWidth;
+    } else {
+      lines.push(line);
+      line = word;
+      lineWidth = wordWidth;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
 }
 
 /**
@@ -144,42 +200,7 @@ function visualWidth(str: string): number {
  * If a single word exceeds `maxWidth`, it is placed on its own line.
  */
 function wrapLines(text: string, maxWidth: number): string[] {
-  const words = text.split(/(\s+)/); // keep whitespace tokens
-  const lines: string[] = [];
-  let line = "";
-  let lineWidth = 0;
-
-  for (const token of words) {
-    const tw = visualWidth(token);
-
-    // Pure whitespace token
-    if (/^\s+$/.test(token)) {
-      // Only add space if line already has content and it fits
-      if (line.length > 0 && lineWidth + tw <= maxWidth) {
-        line += token;
-        lineWidth += tw;
-      }
-      continue;
-    }
-
-    // Word token
-    if (line.length === 0) {
-      // Start of a new line — always accept the word
-      line = token;
-      lineWidth = tw;
-    } else if (lineWidth + 1 + tw <= maxWidth) {
-      // Fits on current line (with a space separator)
-      line += " " + token;
-      lineWidth += 1 + tw;
-    } else {
-      // Doesn't fit — push current line and start new one
-      lines.push(line);
-      line = token;
-      lineWidth = tw;
-    }
-  }
-  if (line.length > 0) lines.push(line);
-  return lines;
+  return wrapTerminalWords(text, maxWidth);
 }
 
 /** Reverse word order (keeps characters within each word as-is). */
@@ -272,7 +293,7 @@ export function applyStrategy(
  * Falls back to `reshaped_reversed` if no strategy has been set yet.
  */
 export function processArabicText(text: string, width?: number): string {
-  return applyStrategy(text, activeStrategy ?? "reshaped_reversed", width);
+  return applyStrategy(text, activeStrategy ?? DEFAULT_RTL_STRATEGY, width);
 }
 
 // ---------------------------------------------------------------------------
@@ -312,7 +333,18 @@ export function renderArabicVerse(
   zoom: number = 0,
   width?: number,
 ): string {
-  const shaped = processArabicText(text, width);
+  return renderArabicVerseWithStrategy(text, activeStrategy ?? DEFAULT_RTL_STRATEGY, zoom, width);
+}
+
+export function renderArabicVerseWithStrategy(
+  text: string,
+  strategy: RtlStrategy,
+  zoom: number = 0,
+  width?: number,
+): string {
+  const shaped = width && width > 0
+    ? wrapTerminalWords(text, width).map((line) => applyStrategy(line, strategy)).join("\n")
+    : applyStrategy(text, strategy, width);
   if (zoom <= 0) return shaped;
 
   const chars = [...shaped];
@@ -336,16 +368,6 @@ export function renderArabicVerse(
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-function getVisualWidth(text: string): number {
-  let width = 0;
-  for (const char of text) {
-    const code = char.codePointAt(0)!;
-    if (isCombiningMark(code)) continue;
-    width += 1;
-  }
-  return width;
-}
 
 function isCombiningMark(code: number): boolean {
   return (

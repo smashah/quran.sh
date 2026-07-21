@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { getVerse } from "../../src/data/quran.ts";
-import { applyStrategy, wrapAndReverse } from "../../src/tui/utils/rtl.ts";
+import { applyStrategy, splitArabicGraphemes, wrapAndReverse } from "../../src/tui/utils/rtl.ts";
 import { chooseReaderLayout } from "../../src/tui/responsive.ts";
 
 const FIXTURES = ["1:1", "1:7", "2:255", "22:18", "55:13", "96:1"] as const;
+const startsWithCombiningMark = (value: string) => /^\p{M}/u.test(value);
 
 describe("Arabic and RTL regression matrix", () => {
   for (const verseKey of FIXTURES) {
@@ -19,11 +20,14 @@ describe("Arabic and RTL regression matrix", () => {
       for (const width of [20, 31, 32, 71, 72]) {
         const reconstructed = wrapAndReverse(text, width)
           .split("\n")
-          .map((line) => [...line].reverse().join(""))
+          .map((line) => splitArabicGraphemes(line).reverse().join(""))
           .join(" ")
           .replace(/\s+/g, " ")
           .trim();
         expect(reconstructed, `${verseKey} at width ${width}`).toBe(text.replace(/\s+/g, " ").trim());
+        for (const cluster of wrapAndReverse(text, width).split("\n").flatMap(splitArabicGraphemes)) {
+          expect(startsWithCombiningMark(cluster), `${verseKey} detached a Quranic mark at width ${width}`).toBe(false);
+        }
       }
     });
   }
