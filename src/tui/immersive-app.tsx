@@ -13,10 +13,34 @@ import { chooseReaderLayout, readerTransitionDuration } from "./responsive.ts";
 import { RTL_STRATEGIES, renderArabicVerse, setRtlStrategy, type RtlStrategy } from "./utils/rtl.ts";
 import { getPreference, setPreference } from "../data/preferences.ts";
 import { parseWordKey, type WordKey } from "../domain/quran-coordinate.ts";
+import { APP_DATA_DIR } from "../data/db.ts";
+import { STARTER_RECITATION_PACK } from "../features/resources/public-recitation.ts";
+import { ChoiceDialog, type DialogChoice } from "./components/choice-dialog.tsx";
+import { TerminalIllumination } from "./components/terminal-illumination.tsx";
+import { networkPlaybackIdentity } from "../features/audio/network-permission.ts";
 
 const modeLabels: Record<ReadingExperienceMode, string> = {
   focus: "Focus", learn: "Learn", recite: "Recite", memorise: "Memorise",
 };
+
+interface OpenDialog {
+  readonly title: string;
+  readonly description: readonly string[];
+  readonly choices: readonly DialogChoice[];
+  readonly onDismiss?: () => void;
+}
+
+function deepestErrorMessage(cause: unknown, fallback: string): string {
+  let current = cause;
+  let message = fallback;
+  const seen = new Set<unknown>();
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    if (current.message) message = current.message;
+    current = current.cause;
+  }
+  return message;
+}
 
 export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean }) {
   const renderer = useRenderer();
@@ -31,6 +55,9 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   const [showStudy, setShowStudy] = useState(false);
   const [activeWordKey, setActiveWordKey] = useState<WordKey | null>(null);
   const [hasTimings, setHasTimings] = useState(false);
+  const [dialog, setDialog] = useState<OpenDialog | null>(null);
+  const [terminalIllumination, setTerminalIllumination] = useState(false);
+  const [gpuIllumination, setGpuIllumination] = useState(false);
   const [focusGlow, setFocusGlow] = useState(1);
   const focusTimeline = useTimeline({ duration: 180, loop: false, autoplay: false });
   useEffect(() => {
@@ -50,9 +77,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   const backdropRef = useRef<(VisualBackdrop & { renderable: import("@opentui/core").Renderable }) | null>(null);
   const followRef = useRef<FollowCoordinator | null>(null);
   const timedRef = useRef<TimedRecitationSession | null>(null);
-  const followDisclosurePending = useRef(false);
-  const playbackDisclosurePending = useRef(false);
-  const spatialDisclosurePending = useRef(false);
+  const packDownloadRef = useRef<AbortController | null>(null);
   const surah = getSurah(surahId)!;
   const verse = surah.verses[verseId - 1]!;
   const verseKey = `${surahId}:${verseId}` as const;
@@ -65,7 +90,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
     timings: hasTimings,
     recognition: recognitionState.status === "ready",
     microphone: Boolean(Bun.which("ffmpeg")),
-    spatial: spatialState.status === "ready",
+    spatial: spatialState.status === "ready" || terminalIllumination || gpuIllumination,
     reducedMotion,
     safeMode,
   };
@@ -101,27 +126,18 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       studyRef.current = service;
       setStudy(await service.inspect(verseKey));
       setShowStudy((visible) => !visible);
-      setMessage(service.licenses().length ? `Loaded ${service.licenses().length} attributed QUL pack(s)` : "No QUL study packs installed — use quran resources import");
+      setMessage(service.licenses().length ? `Loaded ${service.licenses().length} attributed resource pack(s)` : "No study packs installed — use quran resources import");
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : "Study pack unavailable"); }
   }, [safeMode, studyFeature, verseKey]);
 
-  const play = useCallback(async () => {
-    if (safeMode) { setMessage("Playback is off in safe mode"); return; }
-    try {
-      const service = studyRef.current ?? await studyFeature.activate();
-      studyRef.current = service;
-      const rows = await service.recitation(verseKey);
-      const url = rows.find((row) => row.audioUrl)?.audioUrl;
-      if (!url) { setMessage("Install a licensed QUL recitation pack to play this ayah"); return; }
-      if (/^https?:/i.test(url) && getPreference("playbackNetworkAccepted") !== "true") {
-        if (!playbackDisclosurePending.current) {
-          playbackDisclosurePending.current = true;
-          setMessage("This attributed recitation pack uses a network audio URL. Press p again to allow playback; no listening telemetry is sent by quran.sh.");
-          return;
-        }
-        setPreference("playbackNetworkAccepted", "true");
-        playbackDisclosurePending.current = false;
-      }
+  const startPlayback = useCallback(async (
+    rows: Awaited<ReturnType<StudyService["recitation"]>>,
+    url: string,
+  ) => {
+    let network;
+    try { network = networkPlaybackIdentity(url, rows.find((row) => row.audioUrl === url)); }
+    catch (cause) { setMessage(deepestErrorMessage(cause, "Blocked invalid audio URL")); return; }
+    const begin = async () => {
       await followRef.current?.stop();
       const player = playerRef.current ?? await playerFeature.activate();
       playerRef.current = player;
@@ -140,38 +156,212 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       timedRef.current = timed;
       await player.play(verseKey, url);
       setMessage(timingsValid ? `Playing ${verseKey} with verified word timing · p stops` : `Playing ${verseKey} at ayah level · no verified word timing`);
-    } catch (cause) { setMessage(cause instanceof Error ? cause.message : "Playback unavailable"); }
-  }, [playerFeature, safeMode, studyFeature, verseKey]);
-
-  const toggleSpatial = useCallback(async () => {
-    if (safeMode) { setMessage("Spatial rendering is off in safe mode"); return; }
-    if (backdropRef.current) {
-      renderer.root.remove(backdropRef.current.renderable);
-      backdropRef.current = null;
-      await spatialFeature.disable();
-      setMessage("Spatial illumination off");
+    };
+    if (getPreference(network.preferenceKey) !== "true") {
+      setDialog({
+        title: "Allow network playback?",
+        description: [
+          `Provider: ${network.provider}`,
+          `Audio host: ${network.hostname} (${network.origin})`,
+          "quran.sh sends no listening history or telemetry; this provider receives the normal media request.",
+        ],
+        choices: [{
+          key: "y",
+          label: "Allow and play",
+          detail: "Remember this choice on this device.",
+          action: () => {
+            setDialog(null);
+            setPreference(network.preferenceKey, "true");
+            void begin().catch((cause) => setMessage(cause instanceof Error ? cause.message : "Playback unavailable"));
+          },
+        }],
+      });
       return;
     }
-    if (getPreference("spatialDisclosureAccepted") !== "true") {
-      if (!spatialDisclosurePending.current) {
-        spatialDisclosurePending.current = true;
-        setMessage("Spatial mode starts a local WebGPU device and generated terminal-cell scene; it downloads no assets. Press g again to enable it.");
+    await begin();
+  }, [playerFeature, verseKey]);
+
+  const installStarterPackAndPlay = useCallback(async () => {
+    if (packDownloadRef.current) {
+      setMessage("The recitation pack is already downloading");
+      return;
+    }
+    const controller = new AbortController();
+    packDownloadRef.current = controller;
+    const cancel = () => {
+      controller.abort(new Error("Cancelled by the reader"));
+      setMessage("Cancelling the recitation-pack download…");
+    };
+    setDialog({
+      title: "Downloading recitation pack",
+      description: ["Starting the bounded, checksum-pinned download…"],
+      choices: [{ key: "c", label: "Cancel download", action: cancel }],
+      onDismiss: cancel,
+    });
+    setMessage(`Downloading the ${STARTER_RECITATION_PACK.provider} streaming index…`);
+    try {
+      const { installStarterRecitationPack } = await import("../features/resources/public-recitation.ts");
+      await installStarterRecitationPack(APP_DATA_DIR, {
+        signal: controller.signal,
+        onProgress: (received, total) => {
+          const progress = `${Math.round(received / 1024)}${total ? `/${Math.round(total / 1024)}` : ""} KiB`;
+          setMessage(`Downloading recitation index · ${progress}`);
+          setDialog({
+            title: "Downloading recitation pack",
+            description: [`Received ${progress}. Verification and indexing follow automatically.`],
+            choices: [{ key: "c", label: "Cancel download", action: cancel }],
+            onDismiss: cancel,
+          });
+        },
+      });
+      controller.signal.throwIfAborted();
+      await studyFeature.disable();
+      studyRef.current = null;
+      const service = await studyFeature.activate();
+      controller.signal.throwIfAborted();
+      studyRef.current = service;
+      const rows = await service.recitation(verseKey);
+      const url = rows.find((row) => row.audioUrl)?.audioUrl;
+      if (!url) throw new Error("The pack installed but this ayah has no audio mapping. Run `quran resources verify islamic-network.alafasy-128`.");
+      setMessage("Recitation index installed and verified");
+      setDialog(null);
+      await startPlayback(rows, url);
+    } catch (cause) {
+      const cancelled = controller.signal.aborted || (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "cancelled");
+      if (cancelled) {
+        setDialog(null);
+        setMessage("Recitation-pack download cancelled; press p whenever you are ready to retry");
         return;
       }
-      setPreference("spatialDisclosureAccepted", "true");
-      spatialDisclosurePending.current = false;
+      const detail = cause instanceof Error ? cause.message : "The recitation pack could not be installed";
+      setMessage(detail);
+      setDialog({
+        title: "Download did not finish",
+        description: [detail, "Check the connection and retry here, or run `quran resources install starter-audio` later."],
+        choices: [{ key: "r", label: "Retry download", action: () => void installStarterPackAndPlay() }],
+      });
+    } finally {
+      if (packDownloadRef.current === controller) packDownloadRef.current = null;
     }
+  }, [startPlayback, studyFeature, verseKey]);
+
+  const play = useCallback(async () => {
+    if (safeMode) { setMessage("Playback is off in safe mode"); return; }
+    try {
+      const service = studyRef.current ?? await studyFeature.activate();
+      studyRef.current = service;
+      const rows = await service.recitation(verseKey);
+      const url = rows.find((row) => row.audioUrl)?.audioUrl;
+      if (!url) {
+        setDialog({
+          title: "Download a recitation pack?",
+          description: [
+            `${STARTER_RECITATION_PACK.reciter} · 128 kbps · ${STARTER_RECITATION_PACK.provider}`,
+            "This downloads and verifies a ~607 KiB verse index. Audio streams only when you press play.",
+            "Provider terms allow personal/educational, non-commercial listening; the reciter retains copyright.",
+            "Playback is ayah-level; verified word timing can be added later from a compatible QUL pack.",
+          ],
+          choices: [{ key: "d", label: "Download pack", detail: "License and attribution are stored with the installed pack.", action: () => void installStarterPackAndPlay() }],
+        });
+        return;
+      }
+      await startPlayback(rows, url);
+    } catch (cause) { setMessage(cause instanceof Error ? cause.message : "Playback unavailable"); }
+  }, [installStarterPackAndPlay, safeMode, startPlayback, studyFeature, verseKey]);
+
+  const enableSpatial = useCallback(async () => {
+    let activated: (VisualBackdrop & { renderable: import("@opentui/core").Renderable }) | null = null;
+    let attached = false;
     try {
       const backdrop = await spatialFeature.activate();
+      activated = backdrop;
+      renderer.root.add(backdrop.renderable, 0);
+      attached = true;
       backdrop.setReducedMotion(reducedMotion);
       backdrop.setVerse(verseKey, verseId / surah.totalVerses);
       const mushafRow = study?.mushaf.find((row) => row.page && row.line);
       backdrop.setMushafContext(mushafRow ? { page: mushafRow.page!, activeLine: mushafRow.line!, totalLines: Number(mushafRow.raw.total_lines ?? 15) } : null);
-      renderer.root.add(backdrop.renderable, 0);
       backdropRef.current = backdrop;
-      setMessage("Released OpenTUI Three illumination on · g turns it off");
-    } catch (cause) { setMessage(`WebGPU backdrop unavailable: ${cause instanceof Error ? cause.message : "unsupported"}`); }
-  }, [reducedMotion, renderer, safeMode, spatialFeature, study?.mushaf, surah.totalVerses, verseId, verseKey]);
+      setTerminalIllumination(false);
+      setGpuIllumination(true);
+      setMessage("3D arch and star illumination on · it responds to surah and ayah progress · g turns it off");
+    } catch (cause) {
+      let removalFailure: unknown;
+      if (attached && activated) {
+        try { renderer.root.remove(activated.renderable); }
+        catch (error) { removalFailure = error; }
+      }
+      backdropRef.current = null;
+      setGpuIllumination(false);
+      let cleanupFailure: unknown;
+      await spatialFeature.disable().catch((error) => { cleanupFailure = error; });
+      const reason = deepestErrorMessage(cause, "WebGPU device unavailable");
+      const cleanupErrors = [removalFailure, cleanupFailure]
+        .filter((error) => error !== undefined)
+        .map((error) => deepestErrorMessage(error, "unknown finalizer error"));
+      const cleanup = cleanupErrors.length > 0 ? ` Cleanup also failed: ${cleanupErrors.join("; ")}` : "";
+      const { diagnoseWebGpuFailure } = await import("../features/spatial/diagnostics.ts");
+      const diagnosis = diagnoseWebGpuFailure(reason);
+      setDialog({
+        title: "3D backdrop unavailable",
+        description: [`${diagnosis.summary}${cleanup}`, ...diagnosis.steps],
+        choices: [
+          {
+            key: "f",
+            label: "Use terminal illumination",
+            detail: "A lightweight terminal-cell design with no GPU or native dependency.",
+            action: () => { setDialog(null); setGpuIllumination(false); setTerminalIllumination(true); setMessage("Terminal arch illumination on · it follows the active ayah · g turns it off"); },
+          },
+          { key: "r", label: "Retry WebGPU", detail: "Useful after changing drivers or the terminal session.", action: () => { setDialog(null); void enableSpatial(); } },
+        ],
+      });
+    }
+  }, [reducedMotion, renderer, spatialFeature, study?.mushaf, surah.totalVerses, verseId, verseKey]);
+
+  const toggleSpatial = useCallback(async () => {
+    if (safeMode) { setMessage("Spatial rendering is off in safe mode"); return; }
+    if (backdropRef.current || terminalIllumination || gpuIllumination) {
+      let removalFailure: unknown;
+      if (backdropRef.current) {
+        try { renderer.root.remove(backdropRef.current.renderable); }
+        catch (error) { removalFailure = error; }
+      }
+      backdropRef.current = null;
+      setTerminalIllumination(false);
+      setGpuIllumination(false);
+      try {
+        await spatialFeature.disable();
+        setMessage(removalFailure
+          ? `Spatial GPU resources were released, but surface removal failed: ${deepestErrorMessage(removalFailure, "unknown surface error")}. Restart quran.sh before retrying.`
+          : "Spatial illumination off");
+      } catch (cause) {
+        const removal = removalFailure ? ` Surface removal also failed: ${deepestErrorMessage(removalFailure, "unknown surface error")}.` : "";
+        setMessage(`GPU cleanup failed: ${deepestErrorMessage(cause, "unknown finalizer error")}.${removal} Restart quran.sh before retrying.`);
+      }
+      return;
+    }
+    if (getPreference("spatialDisclosureAccepted") !== "true") {
+      setDialog({
+        title: "Enable spatial illumination?",
+        description: [
+          "This starts a local WebGPU device and a generated OpenTUI Three scene.",
+          "It downloads no assets and records no reading data. A terminal-only fallback is offered if WebGPU fails.",
+        ],
+        choices: [{
+          key: "y",
+          label: "Enable 3D arch backdrop",
+          action: () => { setDialog(null); setPreference("spatialDisclosureAccepted", "true"); void enableSpatial(); },
+        }, {
+          key: "f",
+          label: "Use terminal arch backdrop",
+          detail: "Always available, with no GPU or native dependency.",
+          action: () => { setDialog(null); setTerminalIllumination(true); setMessage("Terminal arch illumination on · it follows the active ayah · g turns it off"); },
+        }],
+      });
+      return;
+    }
+    await enableSpatial();
+  }, [enableSpatial, gpuIllumination, renderer, safeMode, spatialFeature, terminalIllumination]);
 
   const toggleFollow = useCallback(async () => {
     if (followRef.current) {
@@ -182,13 +372,19 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
     }
     if (safeMode) { setMessage("Microphone is off in safe mode"); return; }
     if (getPreference("followDisclosureAccepted") !== "true") {
-      if (!followDisclosurePending.current) {
-        followDisclosurePending.current = true;
-        setMessage("Follow mode records the microphone for local inference only; audio is not retained. It needs the separate ~104 MiB Tilawa model. Press v again to consent and start.");
-        return;
-      }
-      setPreference("followDisclosureAccepted", "true");
-      followDisclosurePending.current = false;
+      setDialog({
+        title: "Start local follow mode?",
+        description: [
+          "Follow mode captures the microphone for local inference; quran.sh does not retain the audio.",
+          "It needs FFmpeg and the separately installed ~104 MiB Tilawa model.",
+        ],
+        choices: [{
+          key: "y",
+          label: "Allow microphone and start",
+          action: () => { setDialog(null); setPreference("followDisclosureAccepted", "true"); void toggleFollow(); },
+        }],
+      });
+      return;
     }
     try {
       playerRef.current?.stop();
@@ -220,6 +416,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   }, [showStudy, study?.mushaf, surah.totalVerses, verseId, verseKey]);
 
   useEffect(() => () => {
+    packDownloadRef.current?.abort(new Error("Reader closed"));
     playerRef.current?.stop();
     timedRef.current?.dispose();
     void followRef.current?.stop();
@@ -227,6 +424,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   }, [renderer]);
 
   useKeyboard((key) => {
+    if (dialog) return;
     if (key.sequence === "q") { renderer.destroy(); return; }
     if (key.sequence && ["1", "2", "3", "4"].includes(key.sequence)) { setMode(READING_MODES[Number(key.sequence) - 1]!); return; }
     if (key.sequence === "w") { void inspect(); return; }
@@ -262,15 +460,16 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   const filled = Math.round(verseId / surah.totalVerses * progressWidth);
 
   return (
-    <box width="100%" height="100%" flexDirection="column" backgroundColor="#05070b">
+    <box width="100%" height="100%" flexDirection="column" zIndex={1}>
       <box height={3} flexDirection="row" borderStyle="rounded" borderColor="#355663" justifyContent="space-between" paddingLeft={1} paddingRight={1}>
         <text fg="#d8b45d">{`☾  ${surahId}. ${surah.transliteration} · ${surah.translation}`}</text>
-        <text fg="#7797a5">{`${modeLabels[mode]} · ${layout.mode}${safeMode ? " · SAFE" : ""}  ☽`}</text>
+        <text fg="#7797a5">{`${modeLabels[mode]} · ${layout.mode}${gpuIllumination ? " · 3D ARCH" : terminalIllumination ? " · CELL ARCH" : ""}${safeMode ? " · SAFE" : ""}  ☽`}</text>
       </box>
       <box flexGrow={1} flexDirection="row">
         <box flexGrow={1} flexDirection="column" alignItems="center" justifyContent="center" paddingLeft={2} paddingRight={2}>
           {layout.mode !== "compact" && previous && <text fg="#354249">{renderArabicVerse(previous.text, 0, lineWidth)}</text>}
-          <box width="100%" minHeight={7} marginTop={1} marginBottom={1} padding={1} borderStyle="double" borderColor={focusGlow < 0.55 ? "#5b4c2d" : "#8b7441"} alignItems="center" justifyContent="center">
+          <box width="100%" minHeight={7} marginTop={1} marginBottom={1} padding={1} borderStyle="double" borderColor={terminalIllumination || gpuIllumination ? "#69a6a4" : focusGlow < 0.55 ? "#5b4c2d" : "#8b7441"} alignItems="center" justifyContent="center">
+            {terminalIllumination && <TerminalIllumination verseKey={verseKey} />}
             {activeRenderedIndex >= 0 ? (
               <text fg="#f2ead8"><span>{arabic.slice(0, activeRenderedIndex)}</span><span fg="#05070b" bg="#d8b45d">{activeRenderedWord}</span><span>{arabic.slice(activeRenderedIndex + activeRenderedWord.length)}</span></text>
             ) : <text fg="#f2ead8">{arabic}</text>}
@@ -290,8 +489,15 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       <box height={5} borderStyle="rounded" borderColor="#29404d" flexDirection="column" paddingLeft={1} paddingRight={1}>
         <box flexDirection="row" justifyContent="space-between"><text fg="#d8b45d">{`${"━".repeat(filled)}${"─".repeat(progressWidth - filled)}  ${verseKey}`}</text><text fg="#60727a">{`${verseId}/${surah.totalVerses}`}</text></box>
         <text fg="#8fa4aa">{message}</text>
-        <text fg="#60727a">{`j/k verse · 1 Focus · 2 Learn · 3 Recite · 4 Memorise · w QUL · p play · v follow · g spatial · M motion · q quit`}</text>
+        <text fg="#60727a">{`j/k verse · 1 Focus · 2 Learn · 3 Recite · 4 Memorise · w study · p play · v follow · g spatial · M motion · q quit`}</text>
       </box>
+      <ChoiceDialog
+        visible={dialog !== null}
+        title={dialog?.title ?? ""}
+        description={dialog?.description ?? []}
+        choices={dialog?.choices ?? []}
+        onDismiss={() => dialog?.onDismiss ? dialog.onDismiss() : setDialog(null)}
+      />
     </box>
   );
 }

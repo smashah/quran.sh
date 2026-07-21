@@ -2,6 +2,26 @@
 
 All notable changes to quran.sh are documented here.
 
+## [0.7.1] - 2026-07-21
+
+### Added
+
+- Added an opt-in, application-hash-pinned 6,236-ayah Mishary Rashid Alafasy streaming index from the independent `resource-packs-v1` release using the documented Al Quran Cloud / Islamic Network CDN, with a confirmation/progress/cancel dialog, bounded streaming download, stored attribution, CLI installation, and atomic verification.
+- Added reusable keyboard-owned choice dialogs for pack downloads, remote playback, local microphone capture, and WebGPU activation; `Esc` consistently cancels without leaking the triggering shortcut to the reader.
+- Added `quran doctor --gpu`, platform-specific WebGPU recovery guidance, retry, and a lightweight terminal-cell illumination fallback that keeps spatial mode usable without a GPU.
+- Added a primary-source Quran.com/Quran Foundation experience-source audit covering reusable reader data, credentialed APIs, private account features, and brittle frontend endpoints.
+
+### Fixed
+
+- Initialized `bun-webgpu` globals before probing or creating the OpenTUI Three device, fixing the misleading `navigator.gpu.requestAdapter` unavailable error on otherwise supported systems.
+- Mounted OpenTUI Three as an absolute background, requested its first frame only after attachment, and raised the arch/star contrast so spatial mode visibly frames the reader without displacing Quran text.
+- Replaced dead-end playback and spatial status messages with actions that install, retry, diagnose, fall back, or cancel.
+
+### Security and privacy
+
+- Remote pack acquisition requires HTTPS, enforces manifest/data byte ceilings while streaming to disk, pins the expected pack identity, and reuses the existing size, checksum, coordinate, license, and atomic-promotion gates.
+- Public audio is requested only after explicit provider-and-origin-scoped playback consent; the dialog names both the provider and media host, while quran.sh sends no listening history or telemetry and discloses that the CDN receives the request.
+
 ## [0.7.0] - 2026-07-21
 
 ### Added
@@ -64,4 +84,5 @@ All notable changes to quran.sh are documented here.
 
 [0.6.0]: https://github.com/smashah/quran.sh/compare/v0.5.0...v0.6.0
 [0.7.0]: https://github.com/smashah/quran.sh/compare/v0.6.0...v0.7.0
+[0.7.1]: https://github.com/smashah/quran.sh/compare/v0.7.0...v0.7.1
 [0.5.0]: https://github.com/smashah/quran.sh/releases/tag/v0.5.0

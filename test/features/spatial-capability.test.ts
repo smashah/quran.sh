@@ -1,14 +1,24 @@
 import { describe, expect, test } from "bun:test";
-import { detectWebGpuCapability } from "../../src/features/spatial/three-backdrop.ts";
+import { detectWebGpuCapability, THREE_BACKDROP_LAYOUT } from "../../src/features/spatial/three-backdrop.ts";
 
 describe("OpenTUI Three capability gate", () => {
   test("accepts a device and releases the probe immediately", async () => {
     let destroyed = 0;
-    expect(await detectWebGpuCapability(async () => ({ destroy: () => { destroyed += 1; } }))).toEqual({ supported: true });
+    let initialized = 0;
+    expect(await detectWebGpuCapability(
+      async () => ({ destroy: () => { destroyed += 1; } }),
+      async () => { initialized += 1; },
+    )).toEqual({ supported: true });
+    expect(initialized).toBe(1);
     expect(destroyed).toBe(1);
   });
 
   test("turns device failure into a local capability result", async () => {
     expect(await detectWebGpuCapability(async () => { throw new Error("adapter missing"); })).toEqual({ supported: false, reason: "adapter missing" });
+  });
+
+  test("composes the GPU surface as a background without entering reader layout", () => {
+    expect(THREE_BACKDROP_LAYOUT).toMatchObject({ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" });
+    expect(THREE_BACKDROP_LAYOUT.zIndex).toBeLessThan(0);
   });
 });

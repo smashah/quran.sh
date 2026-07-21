@@ -40,7 +40,7 @@
 - **Activity Panel** — Toggleable right panel listing all bookmarks, cues, and reflections
 - **Full-Text Search** — Search across all translations with `/`
 - **Command Palette** — Quick access to all commands with `Ctrl+P`
-- **QUL Resource Packs** — Import verified JSON or SQLite translations, tafsir, morphology, topics, recitation timing, and Mushaf layouts without scraping or signing in from quran.sh
+- **Attributed Resource Packs** — Install the public Alafasy streaming index or import verified QUL-compatible JSON/SQLite translations, tafsir, morphology, timing, and Mushaf layouts
 - **Local Recitation Following** — Optional Tilawa recognition follows committed verse matches; tentative candidates never move the reader
 
 ### 📊 Progress Tracking
@@ -103,8 +103,10 @@ quran safe
 
 # Inspect capabilities, packs, cache sizes, licenses, and privacy
 quran doctor
+quran doctor --gpu
 
-# Manage user-downloaded QUL-compatible packs
+# Install public starter audio or manage user-downloaded QUL-compatible packs
+quran resources install starter-audio
 quran resources list
 quran resources import manifest.json resource.json
 
@@ -115,7 +117,7 @@ quran models install official --yes
 
 ### TUI Keyboard Shortcuts
 
-The immersive reader uses `1`–`4` for Focus/Learn/Recite/Memorise, `w` for installed QUL study data, `p` for attributed recitation playback, `v` for local follow-my-recitation, `g` for the experimental OpenTUI Three Mushaf-line scene, `M` for reduced motion, and `j`/`k` for verse navigation.
+The immersive reader uses `1`–`4` for Focus/Learn/Recite/Memorise, `w` for installed study data, `p` for attributed recitation playback, `v` for local follow-my-recitation, `g` for the OpenTUI Three arch-and-star backdrop (with a terminal-cell fallback), `M` for reduced motion, and `j`/`k` for verse navigation. Network, microphone, download, and GPU choices use keyboard-owned dialogs; `Esc` always cancels.
 
 #### Navigation
 
@@ -180,7 +182,7 @@ The immersive reader uses `1`–`4` for Focus/Learn/Recite/Memorise, `w` for ins
 
 The bundled Quran text, translations, bookmarks, and reading history work offline. Image mode and image clipboard copying fetch ayah PNGs from `surahquran.com`; the app asks for confirmation before enabling image mode and keeps fetched images only in memory.
 
-QUL and Tilawa assets are never bundled or downloaded at startup. QUL imports come from files the user obtained with permission and retain dataset-specific attribution; Tilawa microphone audio stays local and is not retained by default. See [Optional resources](docs/optional-resources.md) for manifests, licensing, model installation, removal, and privacy.
+Optional packs and Tilawa assets are never downloaded at startup. The first press of `p` can install a checksum-pinned 607 KiB Alafasy verse index from Al Quran Cloud / Islamic Network after confirmation; audio remains remote and streams per ayah. QUL imports still come from files the user obtained with permission and retain dataset-specific attribution, while Tilawa microphone audio stays local and is not retained. See [Optional resources](docs/optional-resources.md) for sources, licensing, installation, removal, and privacy.
 
 ## Development
 
@@ -221,7 +223,7 @@ bun run build:binary
 
 Demo recording scripts are in `demos/`. To record a TUI demo:
 
-The v0.7 next-generation recording is reproducible with `vhs demos/next-generation.tape`; it writes both `demos/quran-next-generation.mp4` and `.gif`.
+The v0.7 next-generation recording is reproducible with `vhs demos/next-generation.tape`. The v0.7.1 consent, playback-pack, WebGPU, and microphone flows use `vhs demos/v0.7.1-dialogs.tape`; each tape writes MP4 and GIF output under `demos/`.
 
 ```bash
 # 1. Start a tmux session

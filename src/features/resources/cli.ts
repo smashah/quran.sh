@@ -7,6 +7,7 @@ const manager = createResourcePackManager(join(APP_DATA_DIR, "resources"));
 function usage(): string {
   return `Usage:
   quran resources list
+  quran resources install starter-audio
   quran resources import <manifest.json> <data.json|data.sqlite>
   quran resources verify <id> [version]
   quran resources licenses
@@ -37,6 +38,24 @@ export async function runResourceCommand(args: readonly string[]): Promise<numbe
         );
       }
       return 0;
+    }
+
+    if (command === "install" && args[1] === "starter-audio") {
+      const { installStarterRecitationPack, STARTER_RECITATION_PACK } = await import("./public-recitation.ts");
+      console.log(`Downloading ${STARTER_RECITATION_PACK.title}…`);
+      const controller = new AbortController();
+      const onInterrupt = () => controller.abort(new Error("Interrupted by user"));
+      process.once("SIGINT", onInterrupt);
+      try {
+        const pack = await installStarterRecitationPack(APP_DATA_DIR, {
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(120_000)]),
+        });
+        console.log(`Installed and verified ${pack.manifest.id}@${pack.manifest.version}`);
+        console.log(`License: ${pack.manifest.license.name} - ${pack.manifest.license.attribution}`);
+        return 0;
+      } finally {
+        process.off("SIGINT", onInterrupt);
+      }
     }
 
     if (command === "import") {

@@ -17,6 +17,7 @@ export interface ResourceRow {
   readonly provenance?: {
     readonly packId: string;
     readonly version: string;
+    readonly provider: string;
     readonly sourceUrl: string;
     readonly license: string;
     readonly attribution: string;
@@ -63,6 +64,7 @@ function normalizeRow(value: unknown, pack?: InstalledResourcePack): ResourceRow
     provenance: pack ? {
       packId: pack.manifest.id,
       version: pack.manifest.version,
+      provider: pack.manifest.source?.provider ?? pack.manifest.license?.attribution ?? pack.manifest.id,
       sourceUrl: pack.manifest.source?.url ?? "",
       license: pack.manifest.license?.name ?? "",
       attribution: pack.manifest.license?.attribution ?? "",

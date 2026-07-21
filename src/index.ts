@@ -14,11 +14,11 @@ Commands:
   log    <ref>     Log a surah or verse as read
   search <query>   Search verse translations
   streak           Show reading stats and streaks
-  resources [...]  Manage optional QUL-compatible content packs
+  resources [...]  Install or manage attributed optional content packs
   immersive        Launch the focused next-generation reader
   stream           Read with completed ayat in terminal scrollback
   safe              Launch the classic text-only reader
-  doctor            Inspect capabilities, packs, caches, and licenses
+  doctor            Inspect capabilities, packs, caches, and licenses (--gpu probes WebGPU)
   models [...]      Install, verify, or remove optional Tilawa assets
 
 Reference formats:

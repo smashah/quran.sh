@@ -1,6 +1,6 @@
 {
   "name": "quran.sh",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "A fast, offline-first Quran CLI and TUI reader",
   "type": "module",
   "bin": {

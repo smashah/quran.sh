@@ -3,14 +3,28 @@ import type { Mesh, MeshStandardMaterial, Object3D } from "three";
 import type { VerseKey } from "../../domain/quran-coordinate.ts";
 import type { VisualBackdrop } from "./types.ts";
 
+export const THREE_BACKDROP_LAYOUT = {
+  position: "absolute" as const,
+  top: 0,
+  left: 0,
+  width: "100%" as const,
+  height: "100%" as const,
+  zIndex: -100,
+} as const;
+
 export async function detectWebGpuCapability(
-  createDevice: () => Promise<{ destroy?(): void }> = async () => {
-    const { createWebGPUDevice } = await import("bun-webgpu");
-    return createWebGPUDevice();
-  },
+  createDevice?: () => Promise<{ destroy?(): void }>,
+  initialize?: () => Promise<void>,
 ): Promise<{ readonly supported: true } | { readonly supported: false; readonly reason: string }> {
   try {
-    const device = await createDevice();
+    const load = createDevice
+      ? { createDevice, initialize: initialize ?? (async () => {}) }
+      : await import("bun-webgpu").then(({ createWebGPUDevice, setupGlobals }) => ({
+        createDevice: createWebGPUDevice,
+        initialize: () => setupGlobals(),
+      }));
+    await load.initialize();
+    const device = await load.createDevice();
     device.destroy?.();
     return { supported: true };
   } catch (cause) {
@@ -28,24 +42,25 @@ export async function createThreeBackdrop(context: RenderContext): Promise<Visua
   const camera = new THREE.PerspectiveCamera(42, 2, 0.1, 100);
   camera.position.set(0, 1.5, 11);
 
-  const ambient = new THREE.AmbientLight(0xb8d8ff, 0.55);
-  const key = new THREE.PointLight(0xd8b45d, 7, 30);
+  const ambient = new THREE.AmbientLight(0xcceeff, 0.9);
+  const key = new THREE.PointLight(0xf1cc72, 10, 30);
   key.position.set(0, 4, 4);
   scene.add(ambient, key);
 
   const root = new THREE.Group();
   const lineGroup = new THREE.Group();
   const lineMeshes: Mesh[] = [];
-  const archMaterial = new THREE.MeshStandardMaterial({ color: 0x29404d, emissive: 0x10232b, roughness: 0.7, metalness: 0.15 });
+  const archMaterial = new THREE.MeshStandardMaterial({ color: 0x4f7d80, emissive: 0x183c42, emissiveIntensity: 1.4, roughness: 0.6, metalness: 0.18 });
   for (let index = 0; index < 5; index++) {
-    const radius = 2.8 + index * 0.65;
-    const arch = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.035 + index * 0.006, 6, 64, Math.PI), archMaterial.clone());
-    arch.rotation.z = Math.PI;
-    arch.position.y = -1.5;
+    const radius = 3.2 + index * 0.68;
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.055 + index * 0.008, 8, 72, Math.PI), archMaterial.clone());
+    // TorusGeometry's 0..π arc is the upper half. Lowering its centre keeps
+    // the crown and pillars around the reader instead of below the viewport.
+    arch.position.y = -2.25;
     arch.position.z = -index * 0.45;
     root.add(arch);
   }
-  const starMaterial = new THREE.MeshBasicMaterial({ color: 0xd8b45d, transparent: true, opacity: 0.2 });
+  const starMaterial = new THREE.MeshBasicMaterial({ color: 0xf1cc72, transparent: true, opacity: 0.72 });
   for (let index = 0; index < 18; index++) {
     const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.025 + (index % 3) * 0.01), starMaterial.clone());
     star.position.set(((index * 37) % 100) / 10 - 5, ((index * 61) % 60) / 10 - 1, -2 - (index % 5));
@@ -61,7 +76,14 @@ export async function createThreeBackdrop(context: RenderContext): Promise<Visua
   lineGroup.rotation.x = -0.12;
   lineGroup.visible = false;
   scene.add(root, lineGroup);
-  const renderable = new ThreeRenderable(context, { id: "quran-spatial-backdrop", scene, camera, width: "100%", height: "100%", autoAspect: true, live: false });
+  const renderable = new ThreeRenderable(context, {
+    id: "quran-spatial-backdrop",
+    scene,
+    camera,
+    ...THREE_BACKDROP_LAYOUT,
+    autoAspect: true,
+    live: false,
+  });
   let reducedMotion = false;
 
   return {
@@ -75,7 +97,7 @@ export async function createThreeBackdrop(context: RenderContext): Promise<Visua
       const hue = ((surah * 13) % 360) / 360;
       for (const arch of root.children.slice(0, 5)) {
         const material = (arch as Mesh).material as MeshStandardMaterial;
-        material.color.setHSL(hue, 0.18, 0.23);
+        material.color.setHSL(hue, 0.32, 0.42);
       }
       renderable.requestRender();
     },
