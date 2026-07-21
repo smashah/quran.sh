@@ -44,7 +44,7 @@ function normalizeRow(value: unknown, pack?: InstalledResourcePack): ResourceRow
   }
   const verseKey = stringValue(raw.verse_key ?? raw.verseKey ?? raw.ayah_key ?? raw.ayahKey);
   const wordKey = stringValue(raw.location ?? raw.word_key ?? raw.wordKey);
-  const text = stringValue(raw.text ?? raw.translation ?? raw.tafsir ?? raw.content ?? raw.word);
+  const text = stringValue(raw.text ?? raw.translation ?? raw.tafsir ?? raw.content ?? raw.body ?? raw.word);
   const segments = Array.isArray(raw.segments)
     ? raw.segments.flatMap((segment): [number, number, number][] => {
         if (!Array.isArray(segment) || segment.length < 3 || !segment.slice(0, 3).every(Number.isFinite)) return [];
@@ -151,7 +151,7 @@ export async function openResourceRepository(pack: InstalledResourcePack): Promi
   const pick = (...candidates: string[]) => candidates.find((candidate) => columns.includes(candidate));
   const verseColumn = pick("verse_key", "verseKey", "ayah_key", "ayahKey");
   const wordColumn = pick("location", "word_key", "wordKey");
-  const searchableColumns = ["text", "translation", "tafsir", "content", "word", "root", "lemma", "topic", "name"]
+  const searchableColumns = ["text", "translation", "tafsir", "content", "body", "word", "root", "lemma", "topic", "name"]
     .filter((column) => columns.includes(column));
   let closed = false;
   const quote = (identifier: string) => `"${identifier}"`;

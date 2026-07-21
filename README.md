@@ -41,6 +41,7 @@
 - **Full-Text Search** — Search across all translations with `/`
 - **Command Palette** — Quick access to all commands with `Ctrl+P`
 - **Attributed Resource Packs** — Install the public Alafasy streaming index or import verified QUL-compatible JSON/SQLite translations, tafsir, morphology, timing, and Mushaf layouts
+- **Related Hadith** — Press `h` for explicitly linked Bukhari/Muslim narrations; local attributed packs load first, the official Quran Foundation API is available with user-supplied credentials, and Quran.com's canonical page is the zero-setup fallback
 - **Local Recitation Following** — Optional Tilawa recognition follows committed verse matches; tentative candidates never move the reader
 
 ### 📊 Progress Tracking
@@ -117,7 +118,7 @@ quran models install official --yes
 
 ### TUI Keyboard Shortcuts
 
-The immersive reader uses `1`–`4` for Focus/Learn/Recite/Memorise, `w` for installed or consented fallback study data, `i` for the consented online ayah-image view, `p` for attributed recitation playback, `v` for local follow-my-recitation, `g` for the OpenTUI Three arch-and-star backdrop (with terminal-cell and online-image exits when no QUL Mushaf layout or WebGPU device is available), `M` for reduced motion, and `j`/`k` for verse navigation. Network, microphone, download, and GPU choices use keyboard-owned dialogs; `Esc` always cancels.
+The immersive reader uses `1`–`4` for Focus/Learn/Recite/Memorise, `w` for installed or consented fallback study data, `h` for explicitly related hadith, `i` for the consented online ayah-image view, `p` for attributed recitation playback, `v` for local follow-my-recitation, `g` for the OpenTUI Three arch-and-star backdrop (with terminal-cell and online-image exits when no QUL Mushaf layout or WebGPU device is available), `M` for reduced motion, and `j`/`k` for verse navigation. Network, microphone, download, and GPU choices use keyboard-owned dialogs; `Esc` always cancels.
 
 #### Navigation
 

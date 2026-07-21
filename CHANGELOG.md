@@ -7,6 +7,7 @@ All notable changes to quran.sh are documented here.
 ### Added
 
 - Added a consented, lazy Al Quran Cloud study fallback for ayat without an installed compatible QUL tafsir row, with attributed Tafsir al-Muyassar, bounded per-ayah requests and memory cache, RTL-safe rendering, retry/offline exits, per-resource provenance in hybrid panels, and a scrollable study overlay at standard terminal sizes.
+- Added `h` in immersive mode for verse-related hadith: attributed local `hadith` packs take priority, approved user-supplied Quran Foundation credentials enable a deferred bilingual in-reader panel with bounded pagination and RTL-safe Arabic, and the canonical Quran.com page remains the zero-setup fallback without scraping private endpoints.
 
 ### Changed
 

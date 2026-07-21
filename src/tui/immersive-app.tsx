@@ -20,9 +20,11 @@ import { ChoiceDialog, type DialogChoice } from "./components/choice-dialog.tsx"
 import { TerminalIllumination } from "./components/terminal-illumination.tsx";
 import { networkPlaybackIdentity } from "../features/audio/network-permission.ts";
 import type { ResourceRow } from "../features/resources/repository.ts";
+import type { HadithPage, HadithRecord } from "../features/hadith/types.ts";
 
 const ONLINE_STUDY_PERMISSION_KEY = "onlineStudy.alquranCloudAccepted";
 const ONLINE_IMAGE_PERMISSION_KEY = "onlineImage.islamicNetworkCdnAccepted.v1";
+const ONLINE_HADITH_PERMISSION_KEY = "onlineHadith.quranFoundationAccepted.v1";
 type StudySource = "local" | "online" | "hybrid";
 
 const LazyImageReader = lazy(async () => {
@@ -60,6 +62,20 @@ function hasStudyContent(snapshot: StudySnapshot): boolean {
     || snapshot.topics.length > 0
     || snapshot.crossReferences.length > 0
     || snapshot.mushaf.length > 0;
+}
+
+function quranComHadithUrl(verseKey: string): string {
+  const [surahNumber, ayahNumber] = verseKey.split(":").map(Number);
+  const surah = getSurah(surahNumber ?? 0);
+  if (!surah || !Number.isSafeInteger(ayahNumber) || ayahNumber! < 1 || !surah.verses[ayahNumber! - 1]) {
+    throw new Error(`Invalid Quran coordinate: ${verseKey}`);
+  }
+  const slug = surah.transliteration
+    .toLocaleLowerCase("en")
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `https://quran.com/${slug}/${ayahNumber}/hadith`;
 }
 
 function ResourceAttribution({ row }: { readonly row: ResourceRow }) {
@@ -144,6 +160,82 @@ function StudyPanel({
   );
 }
 
+function HadithPanel({
+  value,
+  verseKey,
+  width,
+  height,
+  overlay = false,
+  loadingMore,
+  onLoadMore,
+}: {
+  readonly value: HadithPage | null;
+  readonly verseKey: string;
+  readonly width: number;
+  readonly height?: number;
+  readonly overlay?: boolean;
+  readonly loadingMore: boolean;
+  readonly onLoadMore: () => void;
+}) {
+  const scrollRef = useRef<ScrollBoxRenderable | null>(null);
+  useEffect(() => scrollRef.current?.scrollTo(0), [verseKey]);
+  useKeyboard((key) => {
+    if (key.sequence === "[") { key.preventDefault(); key.stopPropagation(); scrollRef.current?.scrollBy(-5); }
+    if (key.sequence === "]") { key.preventDefault(); key.stopPropagation(); scrollRef.current?.scrollBy(5); }
+    if (key.sequence === "n" && value?.hasMore && !loadingMore) {
+      key.preventDefault();
+      key.stopPropagation();
+      onLoadMore();
+    }
+  });
+  const contentWidth = Math.max(1, width - 5);
+  const displayLines = (value: string, direction?: "rtl" | "ltr"): string[] => direction === "rtl" || /[\u0600-\u06ff]/u.test(value)
+    ? renderArabicVerse(value, 0, contentWidth).split("\n").map((line) => alignRTL(line, contentWidth))
+    : wrapTerminalWords(value, contentWidth);
+  const sourceLabel = value?.source === "quran-foundation" ? "ONLINE · QURAN FOUNDATION" : "LOCAL PACK";
+  const position = overlay
+    ? { position: "absolute" as const, top: 3, left: 2, zIndex: 155, backgroundColor: "#081017" }
+    : {};
+  const renderRecord = (record: HadithRecord) => (
+    <box key={record.id} flexDirection="column" marginBottom={1}>
+      {displayLines(record.name).map((line, index) => <text key={`${record.id}-name-${index}`} fg="#d8b45d">{line}</text>)}
+      <text fg="#d8b45d">Hadith</text>
+      {displayLines(record.hadithNumber).map((line, index) => <text key={`${record.id}-number-${index}`} fg="#d8b45d">{line}</text>)}
+      {record.texts.map((text, index) => (
+        <box key={`${record.id}-${text.language}-${text.urn ?? index}`} flexDirection="column" marginTop={1}>
+          {text.chapterTitle && displayLines(text.chapterTitle).map((line, lineIndex) => <text key={`${record.id}-${text.language}-chapter-${lineIndex}`} fg="#6f8b91">{line}</text>)}
+          {displayLines(text.body, text.direction).map((line, lineIndex) => <text key={`${record.id}-${text.language}-body-${lineIndex}`} fg={text.language === "ar" ? "#f2ead8" : "#aeb8b6"}>{line}</text>)}
+          {text.grades.length > 0 && <text fg="#7797a5">Grade</text>}
+          {text.grades.map((grade, gradeIndex) => (
+            <box key={`${record.id}-${text.language}-grade-${gradeIndex}`} flexDirection="column">
+              {displayLines(grade.grade).map((line, lineIndex) => <text key={`${record.id}-${text.language}-grade-${gradeIndex}-${lineIndex}`} fg="#7797a5">{line}</text>)}
+              {grade.gradedBy && displayLines(grade.gradedBy).map((line, lineIndex) => <text key={`${record.id}-${text.language}-grader-${gradeIndex}-${lineIndex}`} fg="#60727a">{line}</text>)}
+            </box>
+          ))}
+        </box>
+      ))}
+      {displayLines(record.provenance.attribution).map((line, index) => <text key={`${record.id}-attribution-${index}`} fg="#60727a">{line}</text>)}
+      <text fg="#52646b">Terms</text>
+      {displayLines(record.provenance.license).map((line, index) => <text key={`${record.id}-license-${index}`} fg="#52646b">{line}</text>)}
+      {record.provenance.sourceUrl && <text fg="#52646b" wrapMode="char">{`Source: ${record.provenance.sourceUrl}`}</text>}
+      {record.provenance.termsUrl && <text fg="#52646b" wrapMode="char">{`Policy: ${record.provenance.termsUrl}`}</text>}
+    </box>
+  );
+  return (
+    <box {...position} width={width} height={height} borderStyle="rounded" borderColor="#476672" flexDirection="column" padding={1}>
+      <text fg="#d8b45d">{`Hadith · ${verseKey} · ${sourceLabel} · [/] scroll · h closes`}</text>
+      <scrollbox ref={scrollRef} flexGrow={1} width="100%" scrollY={true} viewportCulling={true} scrollbarOptions={{ visible: true }}>
+        <text fg="#7797a5" wrapMode="char">Only narrations that explicitly reference this ayah are included. Quran.com curates this non-exhaustive selection from Sahih al-Bukhari and Sahih Muslim via Sunnah.com.</text>
+        {(value?.records.length ?? 0) > 0
+          ? value!.records.map(renderRecord)
+          : <text fg="#60727a">No curated related hadith are currently available for this ayah.</text>}
+        {value?.truncated && <text fg="#7797a5">Only twelve records remain visible at once to keep terminal memory bounded.</text>}
+        {value?.hasMore && <text fg="#d8b45d">{loadingMore ? "Loading the next bounded page…" : "Press n to load the next 4 narrations"}</text>}
+      </scrollbox>
+    </box>
+  );
+}
+
 export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean }) {
   const renderer = useRenderer();
   const dimensions = useTerminalDimensions();
@@ -156,6 +248,9 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   const [study, setStudy] = useState<StudySnapshot | null>(null);
   const [studySource, setStudySource] = useState<StudySource | null>(null);
   const [showStudy, setShowStudy] = useState(false);
+  const [hadithPage, setHadithPage] = useState<HadithPage | null>(null);
+  const [showHadith, setShowHadith] = useState(false);
+  const [loadingMoreHadith, setLoadingMoreHadith] = useState(false);
   const [showImage, setShowImage] = useState(false);
   const [imageRetry, setImageRetry] = useState(0);
   const [activeWordKey, setActiveWordKey] = useState<WordKey | null>(null);
@@ -185,6 +280,9 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   const packDownloadRef = useRef<AbortController | null>(null);
   const openStudyRef = useRef<AbortController | null>(null);
   const clearOpenStudyCacheRef = useRef<(() => void) | null>(null);
+  const hadithRequestRef = useRef<AbortController | null>(null);
+  const clearHadithCacheRef = useRef<(() => void) | null>(null);
+  const activePaneRef = useRef<"reader" | "study" | "hadith" | "image">("reader");
   const surah = getSurah(surahId)!;
   const verse = surah.verses[verseId - 1]!;
   const verseKey = `${surahId}:${verseId}` as const;
@@ -239,7 +337,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
         clearOpenStudyCacheRef.current = provider.clearOpenStudyCache;
         const onlineSnapshot = await provider.fetchOpenStudySnapshot(key, { signal: controller.signal });
         controller.signal.throwIfAborted();
-        if (verseKeyRef.current !== key) return;
+        if (verseKeyRef.current !== key || activePaneRef.current !== "study") return;
         const snapshot = localSnapshot && hasStudyContent(localSnapshot)
           ? { ...localSnapshot, tafsir: localSnapshot.tafsir.length > 0 ? localSnapshot.tafsir : onlineSnapshot.tafsir }
           : onlineSnapshot;
@@ -249,7 +347,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
         setShowStudy(true);
         setMessage(`${provider.OPEN_STUDY_PROVIDER.editionName} · online fallback from ${provider.OPEN_STUDY_PROVIDER.name}`);
       } catch (cause) {
-        if (controller.signal.aborted || verseKeyRef.current !== key) return;
+        if (controller.signal.aborted || verseKeyRef.current !== key || activePaneRef.current !== "study") return;
         const detail = deepestErrorMessage(cause, "Online study is unavailable");
         setMessage(`${detail} · the Quran reader remains available offline`);
         setDialog({
@@ -297,18 +395,21 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   const inspect = useCallback(async () => {
     if (showStudy) {
       openStudyRef.current?.abort(new Error("Study pane closed"));
+      activePaneRef.current = "reader";
       setShowStudy(false);
       setMessage("Study pane closed; cached online rows remain bounded for this session");
       return;
     }
     if (safeMode) { setMessage("Safe mode keeps every optional subsystem off"); return; }
+    activePaneRef.current = "study";
+    hadithRequestRef.current?.abort(new Error("Study pane opened"));
     const requestedKey = verseKey;
     try {
       const service = studyRef.current ?? await studyFeature.activate();
-      if (verseKeyRef.current !== requestedKey) return;
+      if (verseKeyRef.current !== requestedKey || activePaneRef.current !== "study") return;
       studyRef.current = service;
       const snapshot = await service.inspect(requestedKey);
-      if (verseKeyRef.current !== requestedKey) return;
+      if (verseKeyRef.current !== requestedKey || activePaneRef.current !== "study") return;
       if (snapshot.tafsir.length > 0) {
         setStudy(snapshot);
         setStudySource("local");
@@ -368,12 +469,204 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
         }],
       });
     } catch (cause) {
-      if (verseKeyRef.current === requestedKey) setMessage(cause instanceof Error ? cause.message : "Study pack unavailable");
+      if (verseKeyRef.current === requestedKey && activePaneRef.current === "study") setMessage(cause instanceof Error ? cause.message : "Study pack unavailable");
     }
   }, [loadOnlineStudy, safeMode, showStudy, studyFeature, verseKey]);
 
   useEffect(() => {
     openStudyRef.current?.abort(new Error("Ayah changed while study data was loading"));
+  }, [verseKey]);
+
+  const openQuranComHadithPage = useCallback(async (key: string) => {
+    if (verseKeyRef.current !== key) { setMessage("The ayah changed · press h for its related hadith"); return; }
+    const url = quranComHadithUrl(key);
+    activePaneRef.current = "reader";
+    setShowHadith(false);
+    try {
+      const { openQuranDotComUrl } = await import("./utils/external-url.ts");
+      if (verseKeyRef.current !== key) { setMessage("The ayah changed · press h for its related hadith"); return; }
+      await openQuranDotComUrl(url);
+      if (verseKeyRef.current === key) setMessage(`Opened Quran.com's related-hadith page for ${key}`);
+    } catch (cause) {
+      if (verseKeyRef.current !== key) return;
+      setMessage(deepestErrorMessage(cause, `Visit ${url}`));
+      setDialog({
+        title: "Could not open the browser",
+        description: [deepestErrorMessage(cause, "No system browser opener is available"), `Open this URL manually: ${url}`],
+        choices: [{ key: "c", label: "Continue reading", action: () => setDialog(null) }],
+      });
+    }
+  }, []);
+
+  const loadOnlineHadith = useCallback(async (key: string, page = 1, append = false) => {
+    hadithRequestRef.current?.abort(new Error("Replaced by a newer hadith request"));
+    const controller = new AbortController();
+    hadithRequestRef.current = controller;
+    if (append) setLoadingMoreHadith(true);
+    else setMessage(`Loading curated related hadith for ${key}…`);
+    try {
+      const provider = await import("../features/hadith/quran-foundation-provider.ts");
+      clearHadithCacheRef.current = provider.clearQuranFoundationHadithCache;
+      const nextPage = await provider.fetchQuranFoundationHadithPage(key, page, { signal: controller.signal });
+      controller.signal.throwIfAborted();
+      if (verseKeyRef.current !== key || activePaneRef.current !== "hadith") return;
+      setHadithPage((current) => {
+        if (!append || current?.verseKey !== key) return nextPage;
+        const unique = new Map([...current.records, ...nextPage.records]
+          .map((record) => [`${record.collection}:${record.hadithNumber}`, record]));
+        return { ...nextPage, records: [...unique.values()].slice(-12), truncated: current.truncated || unique.size > 12 };
+      });
+      setShowStudy(false);
+      setShowImage(false);
+      setShowHadith(true);
+      setMessage(nextPage.records.length > 0
+        ? `Loaded ${nextPage.records.length} curated narration(s) from Quran Foundation · h closes`
+        : "No curated related hadith are currently available for this ayah · h closes");
+    } catch (cause) {
+      if (controller.signal.aborted || verseKeyRef.current !== key || activePaneRef.current !== "hadith") return;
+      const detail = deepestErrorMessage(cause, "Related hadith are temporarily unavailable");
+      setMessage(`${detail} · Quran reading remains available`);
+      setDialog({
+        title: "Related hadith unavailable",
+        description: [detail, "No reading history, notes, or surrounding ayat were sent."],
+        choices: [{
+          key: "r",
+          label: "Retry official API",
+          action: () => {
+            setDialog(null);
+            if (verseKeyRef.current === key) void loadOnlineHadith(key, page, append);
+            else setMessage("The ayah changed · press h for its related hadith");
+          },
+        }, {
+          key: "o",
+          label: "Open Quran.com",
+          detail: "Use Quran.com's canonical related-hadith page for this ayah.",
+          action: () => { setDialog(null); void openQuranComHadithPage(key); },
+        }, {
+          key: "c",
+          label: "Continue reading",
+          action: () => { activePaneRef.current = "reader"; setDialog(null); setShowHadith(false); },
+        }],
+      });
+    } finally {
+      if (hadithRequestRef.current === controller) {
+        hadithRequestRef.current = null;
+        setLoadingMoreHadith(false);
+      }
+    }
+  }, [openQuranComHadithPage]);
+
+  const inspectHadith = useCallback(async () => {
+    if (showHadith) {
+      hadithRequestRef.current?.abort(new Error("Hadith panel closed"));
+      activePaneRef.current = "reader";
+      setShowHadith(false);
+      setMessage("Hadith panel closed; reading position preserved");
+      return;
+    }
+    if (safeMode) { setMessage("Related hadith sources are off in safe mode"); return; }
+    activePaneRef.current = "hadith";
+    openStudyRef.current?.abort(new Error("Hadith panel opened"));
+    const requestedKey = verseKey;
+    let localFailure: string | null = null;
+    try {
+      const [service, local] = await Promise.all([
+        studyRef.current ? Promise.resolve(studyRef.current) : studyFeature.activate(),
+        import("../features/hadith/local.ts"),
+      ]);
+      if (verseKeyRef.current !== requestedKey || activePaneRef.current !== "hadith") return;
+      studyRef.current = service;
+      const localRows = await service.hadith?.(requestedKey) ?? [];
+      if (verseKeyRef.current !== requestedKey || activePaneRef.current !== "hadith") return;
+      const localPage = local.hadithPageFromLocalRows(requestedKey, localRows);
+      if (localPage.records.length > 0) {
+        setHadithPage(localPage);
+        setShowStudy(false);
+        setShowImage(false);
+        setShowHadith(true);
+        setMessage(`Loaded ${localPage.records.length} related narration(s) from attributed local packs`);
+        return;
+      }
+    } catch (cause) {
+      localFailure = deepestErrorMessage(cause, "The local related-hadith source is unavailable");
+    }
+    if (verseKeyRef.current !== requestedKey || activePaneRef.current !== "hadith") return;
+    let provider: typeof import("../features/hadith/quran-foundation-provider.ts") | null = null;
+    try { provider = await import("../features/hadith/quran-foundation-provider.ts"); }
+    catch (cause) { localFailure = [localFailure, deepestErrorMessage(cause, "The in-reader provider could not load")].filter(Boolean).join(" · "); }
+    if (verseKeyRef.current !== requestedKey || activePaneRef.current !== "hadith") return;
+    if (provider?.hasQuranFoundationCredentials()) {
+      if (getPreference(ONLINE_HADITH_PERMISSION_KEY) === "true") {
+        await loadOnlineHadith(requestedKey);
+        return;
+      }
+      setDialog({
+        title: "Use Quran Foundation related hadith?",
+        description: [
+          ...(localFailure ? [`Local source: ${localFailure}`] : []),
+          "QUL currently has no hadith dataset. The official Quran Foundation API supplies Quran.com's curated, non-exhaustive links to Sahih al-Bukhari and Sahih Muslim via Sunnah.com.",
+          `Only ayah ${requestedKey} is requested. Quran Foundation receives your IP address; quran.sh sends no notes, history, bookmarks, or surrounding ayat.`,
+          "Your QF_CLIENT_SECRET is sent only to Quran Foundation's OAuth host, held in memory with its short-lived token, and never logged or persisted by quran.sh.",
+          "Four narrations in both Arabic and English are requested at a time; responses are size-limited and retained only in a 24-page/2 MiB session cache.",
+        ],
+        choices: [{
+          key: "y",
+          label: "Use official API",
+          detail: "Remember this provider choice on this device.",
+          action: () => {
+            setDialog(null);
+            if (verseKeyRef.current !== requestedKey) { setMessage("The ayah changed · press h for its related hadith"); return; }
+            setPreference(ONLINE_HADITH_PERMISSION_KEY, "true");
+            void loadOnlineHadith(requestedKey);
+          },
+        }, {
+          key: "o",
+          label: "Open Quran.com",
+          detail: "View the same curated feature in your browser without giving quran.sh API credentials.",
+          action: () => { setDialog(null); void openQuranComHadithPage(requestedKey); },
+        }, {
+          key: "l",
+          label: "Stay local",
+          action: () => { activePaneRef.current = "reader"; setDialog(null); setMessage("No local related-hadith pack covers this ayah; reading remains offline"); },
+        }],
+      });
+      return;
+    }
+    setDialog({
+      title: "View related hadith for this ayah?",
+      description: [
+        ...(localFailure ? [`Local source: ${localFailure}`] : []),
+        "QUL currently has no hadith dataset, and Quran Foundation's supported API requires approved developer credentials that quran.sh does not bundle.",
+        "Quran.com's list contains narrations that explicitly cite this ayah, is limited to Sahih al-Bukhari and Sahih Muslim, and is not exhaustive. Some ayat have no entries.",
+        "Open the canonical Quran.com page now, or later configure QF_CLIENT_ID and QF_CLIENT_SECRET for the lazy in-reader panel.",
+      ],
+      choices: [{
+        key: "o",
+        label: "Open Quran.com",
+        detail: `Open ${quranComHadithUrl(requestedKey)} in the system browser.`,
+        action: () => { setDialog(null); void openQuranComHadithPage(requestedKey); },
+      }, {
+        key: "l",
+        label: "Stay local",
+        action: () => { activePaneRef.current = "reader"; setDialog(null); setMessage("Stayed offline; press h whenever you want related hadith"); },
+      }],
+    });
+  }, [loadOnlineHadith, openQuranComHadithPage, safeMode, showHadith, studyFeature, verseKey]);
+
+  const loadMoreHadith = useCallback(() => {
+    if (!hadithPage?.hasMore || hadithPage.source !== "quran-foundation" || loadingMoreHadith) return;
+    void loadOnlineHadith(hadithPage.verseKey, hadithPage.page + 1, true);
+  }, [hadithPage, loadOnlineHadith, loadingMoreHadith]);
+
+  useEffect(() => {
+    hadithRequestRef.current?.abort(new Error("Ayah changed while hadith data was loading"));
+    if (activePaneRef.current === "hadith") {
+      activePaneRef.current = "reader";
+      setDialog(null);
+      setShowHadith(false);
+      setHadithPage(null);
+      setMessage("Ayah changed · press h for its related hadith");
+    }
   }, [verseKey]);
 
   const startPlayback = useCallback(async (
@@ -547,7 +840,11 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   }, []);
 
   const openImage = useCallback(() => {
+    activePaneRef.current = "image";
+    openStudyRef.current?.abort(new Error("Image pane opened"));
+    hadithRequestRef.current?.abort(new Error("Image pane opened"));
     setShowStudy(false);
+    setShowHadith(false);
     setShowImage(true);
     setImageRetry((value) => value + 1);
     setMessage("Loading the attributed online ayah image · i returns to terminal text");
@@ -585,6 +882,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       requestImage();
       return;
     }
+    activePaneRef.current = "reader";
     setShowImage(false);
     setMessage("Online image view closed; reading position preserved");
   }, [requestImage, showImage]);
@@ -798,7 +1096,9 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   useEffect(() => () => {
     packDownloadRef.current?.abort(new Error("Reader closed"));
     openStudyRef.current?.abort(new Error("Reader closed"));
+    hadithRequestRef.current?.abort(new Error("Reader closed"));
     clearOpenStudyCacheRef.current?.();
+    clearHadithCacheRef.current?.();
     playerRef.current?.stop();
     timedRef.current?.dispose();
     void followRef.current?.stop();
@@ -809,7 +1109,8 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
     if (dialog) return;
     if (key.sequence === "q") { renderer.destroy(); return; }
     if (key.sequence && ["1", "2", "3", "4"].includes(key.sequence)) { setMode(READING_MODES[Number(key.sequence) - 1]!); return; }
-    if (key.sequence === "w") { void inspect(); return; }
+    if (key.sequence === "w") { setShowHadith(false); void inspect(); return; }
+    if (key.sequence === "h") { setShowStudy(false); void inspectHadith(); return; }
     if (key.sequence === "i") { toggleImage(); return; }
     if (key.sequence === "p") { if (["playing", "buffering"].includes(playerRef.current?.getState().status ?? "")) { playerRef.current?.stop(); timedRef.current?.dispose(); timedRef.current = null; setActiveWordKey(null); setMessage("Playback stopped"); } else void play(); return; }
     if (key.sequence === "g") { void toggleSpatial(); return; }
@@ -832,7 +1133,8 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
     }
   });
 
-  const lineWidth = Math.max(28, Math.min(96, dimensions.width - (showStudy && layout.showAuxiliaryPanel ? 42 : 8)));
+  const showSidePanel = (showStudy || showHadith) && layout.showAuxiliaryPanel;
+  const lineWidth = Math.max(28, Math.min(96, dimensions.width - (showSidePanel ? 42 : 8)));
   const arabic = useMemo(() => renderArabicVerse(verse.text, 0, lineWidth), [lineWidth, verse.text]);
   const activeWordNumber = activeWordKey && parseWordKey(activeWordKey)?.key.startsWith(`${verseKey}:`) ? parseWordKey(activeWordKey)?.word : null;
   const activeRenderedWord = activeWordNumber ? renderArabicVerse(verse.text.split(/\s+/)[activeWordNumber - 1] ?? "", 0, lineWidth) : "";
@@ -863,6 +1165,9 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
         {showStudy && layout.showAuxiliaryPanel && (
           <StudyPanel snapshot={study} source={studySource} verseKey={verseKey} width={40} />
         )}
+        {showHadith && hadithPage?.verseKey === verseKey && layout.showAuxiliaryPanel && (
+          <HadithPanel value={hadithPage} verseKey={verseKey} width={40} loadingMore={loadingMoreHadith} onLoadMore={loadMoreHadith} />
+        )}
       </box>
       {showStudy && !layout.showAuxiliaryPanel && (
         <StudyPanel
@@ -872,6 +1177,17 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
           width={Math.max(1, dimensions.width - 4)}
           height={Math.max(1, dimensions.height - 8)}
           overlay={true}
+        />
+      )}
+      {showHadith && hadithPage?.verseKey === verseKey && !layout.showAuxiliaryPanel && (
+        <HadithPanel
+          value={hadithPage}
+          verseKey={verseKey}
+          width={Math.max(1, dimensions.width - 4)}
+          height={Math.max(1, dimensions.height - 8)}
+          overlay={true}
+          loadingMore={loadingMoreHadith}
+          onLoadMore={loadMoreHadith}
         />
       )}
       {showImage && (
@@ -897,7 +1213,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       <box height={5} borderStyle="rounded" borderColor="#29404d" flexDirection="column" paddingLeft={1} paddingRight={1}>
         <box flexDirection="row" justifyContent="space-between"><text fg="#d8b45d">{`${"━".repeat(filled)}${"─".repeat(progressWidth - filled)}  ${verseKey}`}</text><text fg="#60727a">{`${verseId}/${surah.totalVerses}`}</text></box>
         <text fg="#8fa4aa">{message}</text>
-        <text fg="#60727a">{`j/k verse · 1 Focus · 2 Learn · 3 Recite · 4 Memorise · w study · i image · p play · v follow · g spatial · M motion · q quit`}</text>
+        <text fg="#60727a">{`j/k verse · 1 Focus · 2 Learn · 3 Recite · 4 Memorise · w study · h hadith · i image · p play · v follow · g spatial · M motion · q quit`}</text>
       </box>
       <ChoiceDialog
         visible={dialog !== null}

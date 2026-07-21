@@ -15,6 +15,7 @@ export const RESOURCE_PACK_KINDS = [
   "mutashabihat",
   "mushaf-layout",
   "mushaf-image",
+  "hadith",
 ] as const;
 
 export type ResourcePackKind = (typeof RESOURCE_PACK_KINDS)[number];
@@ -195,7 +196,10 @@ function validateResourceObject(value: unknown): number {
   if (word !== undefined && (typeof word !== "string" || !parseWordKey(word))) {
     throw new Error(`Invalid word key: ${String(word)}`);
   }
-  for (const field of [row.text, row.translation, row.tafsir, row.content]) {
+  for (const field of [row.text, row.translation, row.tafsir, row.content, row.body]) {
+    if (typeof field === "string" && /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(field)) {
+      throw new Error("Terminal control characters are not allowed in resource text");
+    }
     if (typeof field === "string" && /<\/?(?:script|style|iframe|object|embed|[a-z][a-z0-9-]*)\b/i.test(field)) {
       throw new Error("HTML/script content requires a reviewed structural importer");
     }
@@ -232,7 +236,7 @@ function normalizedValue(row: Record<string, unknown>, ...keys: string[]): strin
 
 function compactResourceRow(row: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(row).filter(([key, value]) =>
-    value === null || ["string", "number", "boolean"].includes(typeof value) || (key === "segments" && Array.isArray(value)),
+    value === null || ["string", "number", "boolean"].includes(typeof value) || (["segments", "grades"].includes(key) && Array.isArray(value)),
   ));
 }
 
@@ -253,7 +257,7 @@ async function createNormalizedIndex(sourcePath: string, format: ResourcePackFor
     const writeRows = (rows: Iterable<Record<string, unknown>>) => {
       for (const row of rows) insert.run(
         normalizedValue(row, "verse_key", "verseKey", "ayah_key", "ayahKey"), normalizedValue(row, "location", "word_key", "wordKey"),
-        normalizedValue(row, "text", "translation", "tafsir", "content", "word"), normalizedValue(row, "root"), normalizedValue(row, "lemma"),
+        normalizedValue(row, "text", "translation", "tafsir", "content", "body", "word"), normalizedValue(row, "root"), normalizedValue(row, "lemma"),
         normalizedValue(row, "pos", "part_of_speech"), normalizedValue(row, "topic", "name"), normalizedValue(row, "page_number", "page"),
         normalizedValue(row, "line_number", "line"), normalizedValue(row, "audio_url", "audioUrl"), JSON.stringify(compactResourceRow(row)),
       );

@@ -14,6 +14,7 @@ export interface StudySnapshot {
 export interface StudyService {
   inspect(verseKey: string, wordKey?: string): Promise<StudySnapshot>;
   recitation(verseKey: string): Promise<readonly ResourceRow[]>;
+  hadith?(verseKey: string): Promise<readonly ResourceRow[]>;
   search(query: string, limit?: number): Promise<readonly ResourceRow[]>;
   licenses(): readonly { id: string; attribution: string; license: string }[];
   dispose(): void;

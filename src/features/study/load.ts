@@ -48,8 +48,9 @@ export async function loadStudyService(dataDirectory: string, signal?: AbortSign
       };
     },
     recitation: (verseKey) => rowsFor("recitation", verseKey),
+    hadith: (verseKey) => rowsFor("hadith", verseKey),
     async search(query, limit = 50) {
-      const kinds = ["translation", "tafsir", "morphology", "topics", "similar-ayahs", "mutashabihat"];
+      const kinds = ["translation", "tafsir", "morphology", "topics", "similar-ayahs", "mutashabihat", "hadith"];
       const active: { pack: InstalledResourcePack; repository: ResourceRepository }[] = [];
       for (const kind of kinds) active.push(...await openKind(kind));
       return active.flatMap((entry) => entry.repository.search(query, limit)).slice(0, limit);
