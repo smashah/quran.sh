@@ -75,7 +75,7 @@ const savedPrefs = {
   showPanel: loadPref("showPanel", "false") === "true",
   readingMode: loadPref("readingMode", "false") === "true",
   rtlStrategy: loadPref("rtlStrategy", "") as RtlStrategy | "",
-  hasSeenImageWarning: loadPref("hasSeenImageWarning", "false") === "true",
+  hasSeenImageWarning: loadPref("onlineImage.islamicNetworkCdnAccepted.v1", "false") === "true",
 };
 
 // Apply saved RTL strategy immediately (before any render)
@@ -154,7 +154,7 @@ function AppContent() {
       setPreference("showSidebar", String(showSidebar));
       setPreference("showPanel", String(showPanel));
       setPreference("readingMode", String(readingMode));
-      setPreference("hasSeenImageWarning", String(hasSeenImageWarning));
+      setPreference("onlineImage.islamicNetworkCdnAccepted.v1", String(hasSeenImageWarning));
     } catch { /* DB may not be available in tests */ }
   }, [selectedSurahId, currentVerseId, showArabic, showArabicImage, showTranslation, showTransliteration, language, arabicAlign, arabicWidth, arabicFlow, arabicZoom, showSidebar, showPanel, readingMode, hasSeenImageWarning]);
 
@@ -782,6 +782,10 @@ function AppContent() {
             setHasSeenImageWarning(true);
             setShowImageWarningDialog(false);
             setShowArabicImage(true);
+          }}
+          onCancel={() => {
+            setShowImageWarningDialog(false);
+            showFlash("Keeping the local Arabic text view");
           }}
         />
         <HelpDialog visible={showHelp} />

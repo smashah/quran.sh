@@ -5,10 +5,10 @@ import { unlink } from "node:fs/promises";
 import { fetchAyahImage } from "./ayah-image.ts";
 
 /**
- * Download the ayah image from surahquran.com and copy the PNG bytes
+ * Download the ayah image from the Islamic Network CDN and copy the PNG bytes
  * directly into the system clipboard.
  *
- * URL format: https://surahquran.com/img/ayah/{surahId}-{verseId}.png
+ * URL format: https://cdn.islamic.network/quran/images/high-resolution/{surahId}_{verseId}.png
  */
 export async function copyAyahImage(surahId: number, verseId: number): Promise<void> {
   const buffer = await fetchAyahImage(surahId, verseId);

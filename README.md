@@ -117,7 +117,7 @@ quran models install official --yes
 
 ### TUI Keyboard Shortcuts
 
-The immersive reader uses `1`–`4` for Focus/Learn/Recite/Memorise, `w` for installed study data, `p` for attributed recitation playback, `v` for local follow-my-recitation, `g` for the OpenTUI Three arch-and-star backdrop (with a terminal-cell fallback), `M` for reduced motion, and `j`/`k` for verse navigation. Network, microphone, download, and GPU choices use keyboard-owned dialogs; `Esc` always cancels.
+The immersive reader uses `1`–`4` for Focus/Learn/Recite/Memorise, `w` for installed or consented fallback study data, `i` for the consented online ayah-image view, `p` for attributed recitation playback, `v` for local follow-my-recitation, `g` for the OpenTUI Three arch-and-star backdrop (with terminal-cell and online-image exits when no QUL Mushaf layout or WebGPU device is available), `M` for reduced motion, and `j`/`k` for verse navigation. Network, microphone, download, and GPU choices use keyboard-owned dialogs; `Esc` always cancels.
 
 #### Navigation
 
@@ -180,9 +180,9 @@ The immersive reader uses `1`–`4` for Focus/Learn/Recite/Memorise, `w` for ins
 - 114 surahs, 6,236 verses
 - 10 languages: Bengali, English, Spanish, French, Indonesian, Russian, Swedish, Turkish, Urdu, Chinese
 
-The bundled Quran text, translations, bookmarks, and reading history work offline. Image mode and image clipboard copying fetch ayah PNGs from `surahquran.com`; the app asks for confirmation before enabling image mode and keeps fetched images only in memory.
+The bundled Quran text, translations, bookmarks, and reading history work offline. Image mode, its immersive fallback, and image clipboard copying fetch ayah PNGs from the documented Al Quran Cloud / Islamic Network CDN; the app asks for confirmation before enabling a viewer, rejects redirects and non-PNG bodies, and keeps fetched images only in memory.
 
-Optional packs and Tilawa assets are never downloaded at startup. The first press of `p` can install a checksum-pinned 607 KiB Alafasy verse index from Al Quran Cloud / Islamic Network after confirmation; audio remains remote and streams per ayah. QUL imports still come from files the user obtained with permission and retain dataset-specific attribution, while Tilawa microphone audio stays local and is not retained. See [Optional resources](docs/optional-resources.md) for sources, licensing, installation, removal, and privacy.
+Optional packs and Tilawa assets are never downloaded at startup. The first press of `p` can install a checksum-pinned 607 KiB Alafasy verse index from Al Quran Cloud / Islamic Network after confirmation; audio remains remote and streams per ayah. QUL imports still come from files the user obtained with permission and retain dataset-specific attribution. If `w` finds no compatible local QUL study row, it can request attributed Tafsir al-Muyassar for that ayah from the open Al Quran Cloud API after a separate first-use confirmation. Tilawa microphone audio stays local and is not retained. See [Optional resources](docs/optional-resources.md) for sources, licensing, installation, removal, and privacy.
 
 ## Development
 
@@ -253,6 +253,7 @@ under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); see
 - Optional spatial cells powered by the released [OpenTUI Three](https://github.com/anomalyco/opentui/tree/v0.4.5/packages/three)
 - Optional local recitation recognition powered by [Tilawa](https://github.com/yazinsai/tilawa)
 - Optional content-pack integration for [Quranic Universal Library](https://qul.tarteel.ai/resources)
+- Optional online tafsir and ayah images from [Al Quran Cloud / Islamic Network](https://alquran.cloud/api)
 - Arabic shaping via [arabic-reshaper](https://github.com/a-patel/arabic-reshaper)
 - Data from [quran-json](https://github.com/risan/quran-json)
 

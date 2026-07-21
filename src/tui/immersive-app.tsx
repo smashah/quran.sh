@@ -1,5 +1,6 @@
 import { useKeyboard, useRenderer, useTerminalDimensions, useTimeline } from "@opentui/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ScrollBoxRenderable } from "@opentui/core";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSurah } from "../data/quran.ts";
 import { presentationFor, READING_MODES, type CapabilityState, type ReadingExperienceMode } from "../features/experience/mode.ts";
 import { useFeatureCommand, useFeatureState } from "../features/react.tsx";
@@ -10,7 +11,7 @@ import type { VisualBackdrop } from "../features/spatial/types.ts";
 import type { FollowCoordinator } from "../features/recognition/follow-coordinator.ts";
 import type { TilawaRecognizer } from "../features/recognition/types.ts";
 import { chooseReaderLayout, readerTransitionDuration } from "./responsive.ts";
-import { RTL_STRATEGIES, renderArabicVerse, setRtlStrategy, type RtlStrategy } from "./utils/rtl.ts";
+import { alignRTL, RTL_STRATEGIES, renderArabicVerse, setRtlStrategy, wrapTerminalWords, type RtlStrategy } from "./utils/rtl.ts";
 import { getPreference, setPreference } from "../data/preferences.ts";
 import { parseWordKey, type WordKey } from "../domain/quran-coordinate.ts";
 import { APP_DATA_DIR } from "../data/db.ts";
@@ -18,6 +19,16 @@ import { STARTER_RECITATION_PACK } from "../features/resources/public-recitation
 import { ChoiceDialog, type DialogChoice } from "./components/choice-dialog.tsx";
 import { TerminalIllumination } from "./components/terminal-illumination.tsx";
 import { networkPlaybackIdentity } from "../features/audio/network-permission.ts";
+import type { ResourceRow } from "../features/resources/repository.ts";
+
+const ONLINE_STUDY_PERMISSION_KEY = "onlineStudy.alquranCloudAccepted";
+const ONLINE_IMAGE_PERMISSION_KEY = "onlineImage.islamicNetworkCdnAccepted.v1";
+type StudySource = "local" | "online" | "hybrid";
+
+const LazyImageReader = lazy(async () => {
+  const module = await import("./components/image-reader.tsx");
+  return { default: module.ImageReader };
+});
 
 const modeLabels: Record<ReadingExperienceMode, string> = {
   focus: "Focus", learn: "Learn", recite: "Recite", memorise: "Memorise",
@@ -42,6 +53,97 @@ function deepestErrorMessage(cause: unknown, fallback: string): string {
   return message;
 }
 
+function hasStudyContent(snapshot: StudySnapshot): boolean {
+  return snapshot.translation.length > 0
+    || snapshot.tafsir.length > 0
+    || snapshot.words.length > 0
+    || snapshot.topics.length > 0
+    || snapshot.crossReferences.length > 0
+    || snapshot.mushaf.length > 0;
+}
+
+function ResourceAttribution({ row }: { readonly row: ResourceRow }) {
+  const provenance = row.provenance;
+  if (!provenance) return <text fg="#52646b">Installed resource · attribution unavailable</text>;
+  const termsUrl = typeof row.raw.termsUrl === "string" ? row.raw.termsUrl : undefined;
+  return (
+    <box flexDirection="column" marginBottom={1}>
+      <text fg="#60727a" wrapMode="char">{`${provenance.attribution} · ${provenance.license}`}</text>
+      {provenance.sourceUrl && <text fg="#52646b" wrapMode="char">{`Source: ${provenance.sourceUrl}`}</text>}
+      {termsUrl && <text fg="#52646b" wrapMode="char">{`Terms: ${termsUrl}`}</text>}
+    </box>
+  );
+}
+
+function StudyPanel({
+  snapshot,
+  source,
+  verseKey,
+  width,
+  height,
+  overlay = false,
+}: {
+  readonly snapshot: StudySnapshot | null;
+  readonly source: StudySource | null;
+  readonly verseKey: string;
+  readonly width: number;
+  readonly height?: number;
+  readonly overlay?: boolean;
+}) {
+  const scrollRef = useRef<ScrollBoxRenderable | null>(null);
+  useEffect(() => scrollRef.current?.scrollTo(0), [verseKey]);
+  useKeyboard((key) => {
+    if (key.sequence === "[") scrollRef.current?.scrollBy(-5);
+    if (key.sequence === "]") scrollRef.current?.scrollBy(5);
+  });
+  const tafsirRow = snapshot?.tafsir[0];
+  const translationRow = snapshot?.translation[0];
+  const contentWidth = Math.max(1, width - 5);
+  const displayText = (row: ResourceRow, value = row.text ?? ""): string => {
+    if (!value) return "";
+    const rtl = row.direction === "rtl" || row.language === "ar" || /[\u0600-\u06ff]/u.test(value);
+    return rtl
+      ? renderArabicVerse(value, 0, contentWidth).split("\n").map((line) => alignRTL(line, contentWidth)).join("\n")
+      : wrapTerminalWords(value, contentWidth).join("\n");
+  };
+  const sourceLabel = source === "hybrid" ? "LOCAL + ONLINE" : source === "online" ? "ONLINE" : "LOCAL";
+  const position = overlay
+    ? { position: "absolute" as const, top: 3, left: 2, zIndex: 150, backgroundColor: "#081017" }
+    : {};
+  return (
+    <box {...position} width={width} height={height} borderStyle="rounded" borderColor="#476672" flexDirection="column" padding={1}>
+      <text fg="#d8b45d">{`Study · ${verseKey} · ${sourceLabel} · [/] scroll · w closes`}</text>
+      <scrollbox ref={scrollRef} flexGrow={1} width="100%" scrollY={true} viewportCulling={true} scrollbarOptions={{ visible: true }}>
+        {translationRow?.text ? (
+          <box flexDirection="column">
+            <text fg="#aeb8b6">{`Translation\n${displayText(translationRow)}`}</text>
+            <ResourceAttribution row={translationRow} />
+          </box>
+        ) : <text fg="#60727a">No translation row available</text>}
+        {tafsirRow?.text ? (
+          <box flexDirection="column">
+            <text fg="#8fa4aa">{`Tafsir\n${displayText(tafsirRow)}`}</text>
+            <ResourceAttribution row={tafsirRow} />
+          </box>
+        ) : <text fg="#60727a">No tafsir row available</text>}
+        {(snapshot?.topics.length ?? 0) > 0 ? snapshot!.topics.map((row, index) => (
+          <box key={`${row.provenance?.packId ?? "topic"}-${index}`} flexDirection="column">
+            <text fg="#6f8b91">{`Topic\n${displayText(row, row.topic ?? row.text ?? "Untitled")}`}</text>
+            <ResourceAttribution row={row} />
+          </box>
+        )) : <text fg="#60727a">No topic row available</text>}
+        {(snapshot?.words.length ?? 0) > 0 ? snapshot!.words.slice(0, 5).map((row, index) => (
+          <box key={`${row.wordKey ?? "word"}-${row.provenance?.packId ?? index}`} flexDirection="column">
+            <text fg="#7797a5">{displayText(row, row.text ?? "word")}</text>
+            {row.root && <text fg="#6f8b91">{`Root\n${displayText(row, row.root)}`}</text>}
+            <ResourceAttribution row={row} />
+          </box>
+        )) : <text fg="#60727a">No morphology row available</text>}
+      </scrollbox>
+    </box>
+  );
+}
+
 export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean }) {
   const renderer = useRenderer();
   const dimensions = useTerminalDimensions();
@@ -52,7 +154,10 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   const [reducedMotion, setReducedMotion] = useState(() => getPreference("reducedMotion") === "true");
   const [message, setMessage] = useState("A calm space for attentive reading");
   const [study, setStudy] = useState<StudySnapshot | null>(null);
+  const [studySource, setStudySource] = useState<StudySource | null>(null);
   const [showStudy, setShowStudy] = useState(false);
+  const [showImage, setShowImage] = useState(false);
+  const [imageRetry, setImageRetry] = useState(0);
   const [activeWordKey, setActiveWordKey] = useState<WordKey | null>(null);
   const [hasTimings, setHasTimings] = useState(false);
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
@@ -78,9 +183,13 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   const followRef = useRef<FollowCoordinator | null>(null);
   const timedRef = useRef<TimedRecitationSession | null>(null);
   const packDownloadRef = useRef<AbortController | null>(null);
+  const openStudyRef = useRef<AbortController | null>(null);
+  const clearOpenStudyCacheRef = useRef<(() => void) | null>(null);
   const surah = getSurah(surahId)!;
   const verse = surah.verses[verseId - 1]!;
   const verseKey = `${surahId}:${verseId}` as const;
+  const verseKeyRef = useRef<string>(verseKey);
+  verseKeyRef.current = verseKey;
 
   const capabilities: CapabilityState = {
     text: true,
@@ -119,16 +228,153 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
     }
   }, []);
 
+  const loadOnlineStudy = useCallback(async (key: string, localSnapshot?: StudySnapshot) => {
+    const run = async (): Promise<void> => {
+      openStudyRef.current?.abort(new Error("Replaced by a newer online study request"));
+      const controller = new AbortController();
+      openStudyRef.current = controller;
+      setMessage(`Loading attributed online study for ${key}…`);
+      try {
+        const provider = await import("../features/study/open-provider.ts");
+        clearOpenStudyCacheRef.current = provider.clearOpenStudyCache;
+        const onlineSnapshot = await provider.fetchOpenStudySnapshot(key, { signal: controller.signal });
+        controller.signal.throwIfAborted();
+        if (verseKeyRef.current !== key) return;
+        const snapshot = localSnapshot && hasStudyContent(localSnapshot)
+          ? { ...localSnapshot, tafsir: localSnapshot.tafsir.length > 0 ? localSnapshot.tafsir : onlineSnapshot.tafsir }
+          : onlineSnapshot;
+        setStudy(snapshot);
+        setStudySource(localSnapshot && hasStudyContent(localSnapshot) ? "hybrid" : "online");
+        setShowImage(false);
+        setShowStudy(true);
+        setMessage(`${provider.OPEN_STUDY_PROVIDER.editionName} · online fallback from ${provider.OPEN_STUDY_PROVIDER.name}`);
+      } catch (cause) {
+        if (controller.signal.aborted || verseKeyRef.current !== key) return;
+        const detail = deepestErrorMessage(cause, "Online study is unavailable");
+        setMessage(`${detail} · the Quran reader remains available offline`);
+        setDialog({
+          title: "Online study unavailable",
+          description: [detail, "Your Quran text and translation remain available offline."],
+          choices: [
+            {
+              key: "r",
+              label: "Retry online study",
+              action: () => {
+                setDialog(null);
+                if (verseKeyRef.current === key) void run();
+                else setMessage("The ayah changed · press w to load study for the current ayah");
+              },
+            },
+            {
+              key: "c",
+              label: localSnapshot && hasStudyContent(localSnapshot) ? "Show local QUL rows" : "Continue offline",
+              action: () => {
+                setDialog(null);
+                if (verseKeyRef.current !== key) {
+                  setMessage("The ayah changed · press w to load local study for the current ayah");
+                  return;
+                }
+                if (localSnapshot && hasStudyContent(localSnapshot)) {
+                  setStudy(localSnapshot);
+                  setStudySource("local");
+                  setShowStudy(true);
+                  setMessage("Showing attributed local QUL-compatible rows; online tafsir remains unavailable");
+                } else {
+                  setShowStudy(false);
+                  setStudySource(null);
+                }
+              },
+            },
+          ],
+        });
+      } finally {
+        if (openStudyRef.current === controller) openStudyRef.current = null;
+      }
+    };
+    await run();
+  }, []);
+
   const inspect = useCallback(async () => {
+    if (showStudy) {
+      openStudyRef.current?.abort(new Error("Study pane closed"));
+      setShowStudy(false);
+      setMessage("Study pane closed; cached online rows remain bounded for this session");
+      return;
+    }
     if (safeMode) { setMessage("Safe mode keeps every optional subsystem off"); return; }
+    const requestedKey = verseKey;
     try {
       const service = studyRef.current ?? await studyFeature.activate();
+      if (verseKeyRef.current !== requestedKey) return;
       studyRef.current = service;
-      setStudy(await service.inspect(verseKey));
-      setShowStudy((visible) => !visible);
-      setMessage(service.licenses().length ? `Loaded ${service.licenses().length} attributed resource pack(s)` : "No study packs installed — use quran resources import");
-    } catch (cause) { setMessage(cause instanceof Error ? cause.message : "Study pack unavailable"); }
-  }, [safeMode, studyFeature, verseKey]);
+      const snapshot = await service.inspect(requestedKey);
+      if (verseKeyRef.current !== requestedKey) return;
+      if (snapshot.tafsir.length > 0) {
+        setStudy(snapshot);
+        setStudySource("local");
+        setShowImage(false);
+        setShowStudy(true);
+        setMessage(`Loaded ${service.licenses().length} attributed local resource pack(s)`);
+        return;
+      }
+      if (getPreference(ONLINE_STUDY_PERMISSION_KEY) === "true") {
+        await loadOnlineStudy(requestedKey, hasStudyContent(snapshot) ? snapshot : undefined);
+        return;
+      }
+      const hasLocalRows = hasStudyContent(snapshot);
+      setDialog({
+        title: "Use open online study data?",
+        description: [
+          hasLocalRows
+            ? "Installed QUL-compatible rows will stay local, but no local tafsir is available for this ayah."
+            : "No compatible QUL study row is installed for this ayah.",
+          "Fallback: Tafsir al-Muyassar from the keyless Al Quran Cloud / Islamic Network API.",
+          "Only the verse key is requested. The provider receives your IP address; quran.sh sends no account, notes, history, or telemetry.",
+          "The response is size-limited, kept in a 24-ayah memory cache, and cleared when the reader closes.",
+        ],
+        choices: [{
+          key: "y",
+          label: "Use online fallback",
+          detail: "Remember this provider choice on this device.",
+          action: () => {
+            setDialog(null);
+            if (verseKeyRef.current !== requestedKey) {
+              setMessage("The ayah changed · press w to choose study data for the current ayah");
+              return;
+            }
+            setPreference(ONLINE_STUDY_PERMISSION_KEY, "true");
+            void loadOnlineStudy(requestedKey, hasLocalRows ? snapshot : undefined);
+          },
+        }, {
+          key: "l",
+          label: "Stay local",
+          detail: "Continue reading; QUL packs can still be imported later.",
+          action: () => {
+            setDialog(null);
+            if (verseKeyRef.current !== requestedKey) {
+              setMessage("The ayah changed · press w to load local study for the current ayah");
+              return;
+            }
+            if (hasLocalRows) {
+              setStudy(snapshot);
+              setStudySource("local");
+              setShowImage(false);
+              setShowStudy(true);
+              setMessage("Showing the available local QUL-compatible rows; no local tafsir is installed");
+            } else {
+              setMessage("Staying local · use `quran resources import` whenever you have a compatible QUL pack");
+            }
+          },
+        }],
+      });
+    } catch (cause) {
+      if (verseKeyRef.current === requestedKey) setMessage(cause instanceof Error ? cause.message : "Study pack unavailable");
+    }
+  }, [loadOnlineStudy, safeMode, showStudy, studyFeature, verseKey]);
+
+  useEffect(() => {
+    openStudyRef.current?.abort(new Error("Ayah changed while study data was loading"));
+  }, [verseKey]);
 
   const startPlayback = useCallback(async (
     rows: Awaited<ReturnType<StudyService["recitation"]>>,
@@ -269,7 +515,81 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : "Playback unavailable"); }
   }, [installStarterPackAndPlay, safeMode, startPlayback, studyFeature, verseKey]);
 
-  const enableSpatial = useCallback(async () => {
+  const resolveLocalMushafRow = useCallback(async (): Promise<ResourceRow | null> => {
+    const current = study?.verseKey === verseKey
+      ? study.mushaf.find((row) => row.page && row.line) ?? null
+      : null;
+    if (current) return current;
+    try {
+      const service = studyRef.current ?? await studyFeature.activate();
+      studyRef.current = service;
+      const snapshot = await service.inspect(verseKey);
+      return snapshot.mushaf.find((candidate) => candidate.page && candidate.line) ?? null;
+    } catch {
+      return null;
+    }
+  }, [study, studyFeature, verseKey]);
+
+  const handleImageError = useCallback((detail: string) => {
+    setDialog({
+      title: "Ayah image unavailable",
+      description: [detail, "The live Quran text remains available and keeps the same reading position."],
+      choices: [{
+        key: "r",
+        label: "Retry image",
+        action: () => { setDialog(null); setImageRetry((value) => value + 1); },
+      }, {
+        key: "t",
+        label: "Return to terminal text",
+        action: () => { setDialog(null); setShowImage(false); setMessage("Using the built-in Quran text; no image was loaded"); },
+      }],
+    });
+  }, []);
+
+  const openImage = useCallback(() => {
+    setShowStudy(false);
+    setShowImage(true);
+    setImageRetry((value) => value + 1);
+    setMessage("Loading the attributed online ayah image · i returns to terminal text");
+  }, []);
+
+  const requestImage = useCallback(() => {
+    if (safeMode) { setMessage("Online images are off in safe mode"); return; }
+    if (getPreference(ONLINE_IMAGE_PERMISSION_KEY) === "true") {
+      openImage();
+      return;
+    }
+    setDialog({
+      title: "Use an online ayah image?",
+      description: [
+        "QUL-compatible packs remain the preferred source for structured Mushaf layout. This optional visual fallback requests the active ayah PNG from the documented Al Quran Cloud / Islamic Network CDN.",
+        "The CDN receives your IP address. quran.sh sends no account, notes, history, or telemetry.",
+        "High resolution is tried first, then normal resolution on the same HTTPS origin. The PNG is signature-checked, size-limited, cached only in memory, and unloaded when the view closes.",
+      ],
+      choices: [{
+        key: "y",
+        label: "Use online image",
+        detail: "Remember this provider choice on this device.",
+        action: () => { setPreference(ONLINE_IMAGE_PERMISSION_KEY, "true"); setDialog(null); openImage(); },
+      }, {
+        key: "t",
+        label: "Keep terminal text",
+        detail: "Continue at the same ayah without a network request.",
+        action: () => { setDialog(null); setMessage("Using the built-in Quran text; press i whenever you want the image view"); },
+      }],
+    });
+  }, [openImage, safeMode]);
+
+  const toggleImage = useCallback(() => {
+    if (!showImage) {
+      requestImage();
+      return;
+    }
+    setShowImage(false);
+    setMessage("Online image view closed; reading position preserved");
+  }, [requestImage, showImage]);
+
+  const enableSpatial = useCallback(async (localMushafRow: ResourceRow | null) => {
     let activated: (VisualBackdrop & { renderable: import("@opentui/core").Renderable }) | null = null;
     let attached = false;
     try {
@@ -279,8 +599,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       attached = true;
       backdrop.setReducedMotion(reducedMotion);
       backdrop.setVerse(verseKey, verseId / surah.totalVerses);
-      const mushafRow = study?.mushaf.find((row) => row.page && row.line);
-      backdrop.setMushafContext(mushafRow ? { page: mushafRow.page!, activeLine: mushafRow.line!, totalLines: Number(mushafRow.raw.total_lines ?? 15) } : null);
+      backdrop.setMushafContext(localMushafRow ? { page: localMushafRow.page!, activeLine: localMushafRow.line!, totalLines: Number(localMushafRow.raw.total_lines ?? 15) } : null);
       backdropRef.current = backdrop;
       setTerminalIllumination(false);
       setGpuIllumination(true);
@@ -312,11 +631,12 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
             detail: "A lightweight terminal-cell design with no GPU or native dependency.",
             action: () => { setDialog(null); setGpuIllumination(false); setTerminalIllumination(true); setMessage("Terminal arch illumination on · it follows the active ayah · g turns it off"); },
           },
-          { key: "r", label: "Retry WebGPU", detail: "Useful after changing drivers or the terminal session.", action: () => { setDialog(null); void enableSpatial(); } },
+          { key: "r", label: "Retry WebGPU", detail: "Useful after changing drivers or the terminal session.", action: () => { setDialog(null); void enableSpatial(localMushafRow); } },
+          { key: "i", label: "Use online ayah image", detail: "A consented Braille image view that needs no WebGPU device.", action: () => { setDialog(null); requestImage(); } },
         ],
       });
     }
-  }, [reducedMotion, renderer, spatialFeature, study?.mushaf, surah.totalVerses, verseId, verseKey]);
+  }, [reducedMotion, renderer, requestImage, spatialFeature, surah.totalVerses, verseId, verseKey]);
 
   const toggleSpatial = useCallback(async () => {
     if (safeMode) { setMessage("Spatial rendering is off in safe mode"); return; }
@@ -340,28 +660,59 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       }
       return;
     }
+    const localMushafRow = await resolveLocalMushafRow();
+    if (verseKeyRef.current !== verseKey) {
+      setMessage("The ayah changed while checking local Mushaf data · press g again for the current ayah");
+      return;
+    }
     if (getPreference("spatialDisclosureAccepted") !== "true") {
       setDialog({
         title: "Enable spatial illumination?",
         description: [
           "This starts a local WebGPU device and a generated OpenTUI Three scene.",
           "It downloads no assets and records no reading data. A terminal-only fallback is offered if WebGPU fails.",
+          localMushafRow
+            ? `The installed QUL-compatible layout will illuminate page ${localMushafRow.page}, line ${localMushafRow.line}.`
+            : "No local QUL Mushaf layout covers this ayah, so the 3D arch can follow ayah progress but cannot show verified page-line rails.",
         ],
         choices: [{
           key: "y",
           label: "Enable 3D arch backdrop",
-          action: () => { setDialog(null); setPreference("spatialDisclosureAccepted", "true"); void enableSpatial(); },
+          action: () => { setDialog(null); setPreference("spatialDisclosureAccepted", "true"); void enableSpatial(localMushafRow); },
+        }, ...!localMushafRow ? [{
+          key: "i",
+          label: "Use online ayah image",
+          detail: "Open a consented calligraphy view instead of the progress-only 3D arch.",
+          action: () => { setDialog(null); requestImage(); },
         }, {
           key: "f",
           label: "Use terminal arch backdrop",
           detail: "Always available, with no GPU or native dependency.",
           action: () => { setDialog(null); setTerminalIllumination(true); setMessage("Terminal arch illumination on · it follows the active ayah · g turns it off"); },
-        }],
+        }] : [{
+          key: "f",
+          label: "Use terminal arch backdrop",
+          detail: "Always available, with no GPU or native dependency.",
+          action: () => { setDialog(null); setTerminalIllumination(true); setMessage("Terminal arch illumination on · it follows the active ayah · g turns it off"); },
+        }]],
       });
       return;
     }
-    await enableSpatial();
-  }, [enableSpatial, gpuIllumination, renderer, safeMode, spatialFeature, terminalIllumination]);
+    if (!localMushafRow) {
+      setDialog({
+        title: "No local Mushaf layout for this ayah",
+        description: [
+          "The 3D arch can still respond visibly to surah and ayah progress, but verified page-line rails need a compatible local QUL layout.",
+          "You can continue with that progress view, use the terminal arch, or open the consented online calligraphy image.",
+        ],
+        choices: [{ key: "g", label: "Continue with 3D arch", action: () => { setDialog(null); void enableSpatial(null); } },
+          { key: "i", label: "Use online ayah image", action: () => { setDialog(null); requestImage(); } },
+          { key: "f", label: "Use terminal arch", action: () => { setDialog(null); setTerminalIllumination(true); setMessage("Terminal arch illumination on · it follows the active ayah · g turns it off"); } }],
+      });
+      return;
+    }
+    await enableSpatial(localMushafRow);
+  }, [enableSpatial, gpuIllumination, renderer, requestImage, resolveLocalMushafRow, safeMode, spatialFeature, terminalIllumination]);
 
   const toggleFollow = useCallback(async () => {
     if (followRef.current) {
@@ -410,13 +761,44 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
 
   useEffect(() => {
     backdropRef.current?.setVerse(verseKey, verseId / surah.totalVerses);
-    const mushafRow = study?.mushaf.find((row) => row.line);
-    backdropRef.current?.setMushafContext(mushafRow?.page && mushafRow.line ? { page: mushafRow.page, activeLine: mushafRow.line, totalLines: Number(mushafRow.raw.total_lines ?? 15) } : null);
-    if (studyRef.current && showStudy) void studyRef.current.inspect(verseKey).then(setStudy);
-  }, [showStudy, study?.mushaf, surah.totalVerses, verseId, verseKey]);
+    if (!showStudy || study?.verseKey === verseKey) return;
+    if (studySource === "online") {
+      void loadOnlineStudy(verseKey);
+      return;
+    }
+    let active = true;
+    if (studyRef.current && (studySource === "local" || studySource === "hybrid")) {
+      void studyRef.current.inspect(verseKey).then((snapshot) => {
+        if (!active) return;
+        if (studySource === "hybrid" && snapshot.tafsir.length === 0) {
+          void loadOnlineStudy(verseKey, hasStudyContent(snapshot) ? snapshot : undefined);
+          return;
+        }
+        setStudy(snapshot);
+        setStudySource("local");
+      });
+    }
+    return () => { active = false; };
+  }, [loadOnlineStudy, showStudy, study?.verseKey, studySource, surah.totalVerses, verseId, verseKey]);
+
+  useEffect(() => {
+    if (!backdropRef.current) return;
+    let active = true;
+    void resolveLocalMushafRow().then((row) => {
+      if (!active || !backdropRef.current) return;
+      backdropRef.current.setMushafContext(row ? {
+        page: row.page!,
+        activeLine: row.line!,
+        totalLines: Number(row.raw.total_lines ?? 15),
+      } : null);
+    });
+    return () => { active = false; };
+  }, [resolveLocalMushafRow, verseKey]);
 
   useEffect(() => () => {
     packDownloadRef.current?.abort(new Error("Reader closed"));
+    openStudyRef.current?.abort(new Error("Reader closed"));
+    clearOpenStudyCacheRef.current?.();
     playerRef.current?.stop();
     timedRef.current?.dispose();
     void followRef.current?.stop();
@@ -428,6 +810,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
     if (key.sequence === "q") { renderer.destroy(); return; }
     if (key.sequence && ["1", "2", "3", "4"].includes(key.sequence)) { setMode(READING_MODES[Number(key.sequence) - 1]!); return; }
     if (key.sequence === "w") { void inspect(); return; }
+    if (key.sequence === "i") { toggleImage(); return; }
     if (key.sequence === "p") { if (["playing", "buffering"].includes(playerRef.current?.getState().status ?? "")) { playerRef.current?.stop(); timedRef.current?.dispose(); timedRef.current = null; setActiveWordKey(null); setMessage("Playback stopped"); } else void play(); return; }
     if (key.sequence === "g") { void toggleSpatial(); return; }
     if (key.sequence === "v") { void toggleFollow(); return; }
@@ -478,18 +861,43 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
           {!presentation.hideNextVerse && layout.mode === "immersive" && next && <text fg="#354249">{renderArabicVerse(next.text, 0, lineWidth)}</text>}
         </box>
         {showStudy && layout.showAuxiliaryPanel && (
-          <box width={40} borderStyle="rounded" borderColor="#476672" flexDirection="column" padding={1}>
-            <text fg="#d8b45d">{`Study · ${verseKey}`}</text>
-            <text fg="#8fa4aa">{study?.tafsir[0]?.text ?? "No tafsir row in installed packs"}</text>
-            <text fg="#6f8b91">{study?.topics.map((row) => row.topic).filter(Boolean).join(" · ") || "w closes this pane"}</text>
-            <text fg="#7797a5">{study?.words.slice(0, 5).map((row) => `${row.text ?? "word"}${row.root ? ` · root ${row.root}` : ""}`).join("\n")}</text>
-          </box>
+          <StudyPanel snapshot={study} source={studySource} verseKey={verseKey} width={40} />
         )}
       </box>
+      {showStudy && !layout.showAuxiliaryPanel && (
+        <StudyPanel
+          snapshot={study}
+          source={studySource}
+          verseKey={verseKey}
+          width={Math.max(1, dimensions.width - 4)}
+          height={Math.max(1, dimensions.height - 8)}
+          overlay={true}
+        />
+      )}
+      {showImage && (
+        <box
+          position="absolute"
+          top={3}
+          left={2}
+          zIndex={160}
+          width={Math.max(1, dimensions.width - 4)}
+          height={Math.max(1, dimensions.height - 8)}
+          borderStyle="double"
+          borderColor="#8b7441"
+          backgroundColor="#081017"
+          flexDirection="column"
+          title={` Online ayah image · ${verseKey} · i closes `}
+          titleAlignment="center"
+        >
+          <Suspense fallback={<text fg="#60727a">Loading the optional image renderer…</text>}>
+            <LazyImageReader key={`${verseKey}-${imageRetry}`} surahId={surahId} verseId={verseId} focused={true} onError={handleImageError} />
+          </Suspense>
+        </box>
+      )}
       <box height={5} borderStyle="rounded" borderColor="#29404d" flexDirection="column" paddingLeft={1} paddingRight={1}>
         <box flexDirection="row" justifyContent="space-between"><text fg="#d8b45d">{`${"━".repeat(filled)}${"─".repeat(progressWidth - filled)}  ${verseKey}`}</text><text fg="#60727a">{`${verseId}/${surah.totalVerses}`}</text></box>
         <text fg="#8fa4aa">{message}</text>
-        <text fg="#60727a">{`j/k verse · 1 Focus · 2 Learn · 3 Recite · 4 Memorise · w study · p play · v follow · g spatial · M motion · q quit`}</text>
+        <text fg="#60727a">{`j/k verse · 1 Focus · 2 Learn · 3 Recite · 4 Memorise · w study · i image · p play · v follow · g spatial · M motion · q quit`}</text>
       </box>
       <ChoiceDialog
         visible={dialog !== null}

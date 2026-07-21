@@ -2,6 +2,17 @@
 
 All notable changes to quran.sh are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Added a consented, lazy Al Quran Cloud study fallback for ayat without an installed compatible QUL tafsir row, with attributed Tafsir al-Muyassar, bounded per-ayah requests and memory cache, RTL-safe rendering, retry/offline exits, per-resource provenance in hybrid panels, and a scrollable study overlay at standard terminal sizes.
+
+### Changed
+
+- Moved opt-in ayah images to Al Quran Cloud's documented Islamic Network CDN, preferring its high-resolution source and falling back to its normal-resolution source under the same approved HTTPS origin; redirects and invalid PNG bodies are rejected.
+- Connected the lazy image viewer to immersive mode through `i` and to the no-QUL-layout/WebGPU recovery dialogs, with explicit network consent, retry, and a return to live terminal text at the same ayah.
+
 ## [0.7.1] - 2026-07-21
 
 ### Added
@@ -83,6 +94,7 @@ All notable changes to quran.sh are documented here.
 - Stabilized database migrations and test database cleanup.
 
 [0.6.0]: https://github.com/smashah/quran.sh/compare/v0.5.0...v0.6.0
+[Unreleased]: https://github.com/smashah/quran.sh/compare/v0.7.1...HEAD
 [0.7.0]: https://github.com/smashah/quran.sh/compare/v0.6.0...v0.7.0
 [0.7.1]: https://github.com/smashah/quran.sh/compare/v0.7.0...v0.7.1
 [0.5.0]: https://github.com/smashah/quran.sh/releases/tag/v0.5.0

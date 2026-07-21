@@ -14,6 +14,8 @@ export interface ResourceRow {
   readonly line?: number;
   readonly audioUrl?: string;
   readonly segments?: readonly [number, number, number][];
+  readonly language?: string;
+  readonly direction?: "rtl" | "ltr";
   readonly provenance?: {
     readonly packId: string;
     readonly version: string;
@@ -61,6 +63,8 @@ function normalizeRow(value: unknown, pack?: InstalledResourcePack): ResourceRow
     line: numberValue(raw.line_number ?? raw.line),
     audioUrl: stringValue(raw.audio_url ?? raw.audioUrl),
     segments,
+    language: stringValue(raw.language),
+    direction: raw.direction === "rtl" || raw.direction === "ltr" ? raw.direction : undefined,
     provenance: pack ? {
       packId: pack.manifest.id,
       version: pack.manifest.version,

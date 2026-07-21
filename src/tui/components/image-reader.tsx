@@ -4,13 +4,14 @@ import type { ScrollBoxRenderable } from "@opentui/core";
 import { useEffect, useRef, useState } from "react";
 import { useKeyboard, useRenderer } from "@opentui/react";
 import { getSurah } from "../../data/quran";
-import { ayahImageUrl, clearAyahImageCache, fetchAyahImage } from "../utils/ayah-image.ts";
+import { AYAH_IMAGE_PROVIDER, ayahImageUrl, clearAyahImageCache, fetchAyahImage } from "../utils/ayah-image.ts";
 import { DEFAULT_IMAGE_VIEWPORT, dragImageViewport, updateImageViewport, viewportBounds } from "../../features/images/viewport.ts";
 
 interface ImageReaderProps {
   surahId: number;
   verseId: number;
   focused?: boolean;
+  onError?: (message: string) => void;
 }
 
 interface PreparedImage {
@@ -29,6 +30,8 @@ const PREPARED_IMAGE_CACHE_BYTES = 16 * 1024 * 1024;
 let preparedImageCacheBytes = 0;
 const brailleGridCache = new Map<string, { lines: readonly string[]; bytes: number }>();
 const BRAILLE_GRID_CACHE_BYTES = 8 * 1024 * 1024;
+const MAX_IMAGE_DIMENSION = 4096;
+const MAX_IMAGE_PIXELS = 4_000_000;
 let brailleGridCacheBytes = 0;
 let mountedReaders = 0;
 const BRAILLE_MAP = [0x1, 0x8, 0x2, 0x10, 0x4, 0x20, 0x40, 0x80] as const;
@@ -72,10 +75,31 @@ function clearImageCaches(): void {
 
 const yieldToInput = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+function boundedPngDimensions(buffer: Buffer): { readonly width: number; readonly height: number } {
+  if (buffer.byteLength < 24
+    || buffer.readUInt32BE(8) !== 13
+    || buffer.subarray(12, 16).toString("ascii") !== "IHDR") {
+    throw new Error("Image source returned a malformed PNG header");
+  }
+  const width = buffer.readUInt32BE(16);
+  const height = buffer.readUInt32BE(20);
+  if (width === 0 || height === 0
+    || width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION
+    || width * height > MAX_IMAGE_PIXELS) {
+    throw new Error(`Image dimensions ${width}×${height} exceed the safe decode limit`);
+  }
+  return { width, height };
+}
+
 async function prepareImage(buffer: Buffer, signal: AbortSignal): Promise<PreparedImage> {
+  const expected = boundedPngDimensions(buffer);
   const png = await new Promise<PNG>((resolve, reject) => {
     new PNG().parse(buffer, (error, decoded) => error ? reject(error) : resolve(decoded));
   });
+  if (png.width !== expected.width || png.height !== expected.height
+    || png.width * png.height > MAX_IMAGE_PIXELS) {
+    throw new Error("Decoded image dimensions did not match the bounded PNG header");
+  }
   const darkPixels = new Uint8Array(png.width * png.height);
   let minX = png.width;
   let maxX = 0;
@@ -128,7 +152,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Failed to load image";
 }
 
-export function ImageReader({ surahId, verseId, focused = false }: ImageReaderProps) {
+export function ImageReader({ surahId, verseId, focused = false, onError }: ImageReaderProps) {
   const boxRef = useRef<ScrollBoxRenderable | null>(null);
   const renderer = useRenderer();
   const [image, setImage] = useState<PreparedImage | null>(null);
@@ -217,15 +241,17 @@ export function ImageReader({ surahId, verseId, focused = false }: ImageReaderPr
       })
       .catch((cause: unknown) => {
         if (!active || controller.signal.aborted) return;
-        setError(errorMessage(cause));
+        const message = errorMessage(cause);
+        setError(message);
         setLoading(false);
+        onError?.(message);
       });
 
     return () => {
       active = false;
       controller.abort();
     };
-  }, [surahId, verseId]);
+  }, [onError, surahId, verseId]);
 
   useEffect(() => {
     const box = boxRef.current;
@@ -316,8 +342,8 @@ export function ImageReader({ surahId, verseId, focused = false }: ImageReaderPr
     return () => {
       active = false;
       if (canvas) {
-        box.remove(canvas);
-        canvas.destroy();
+        if (box.getChildren().includes(canvas)) box.remove(canvas);
+        if (!canvas.isDestroyed) canvas.destroy();
       }
     };
   }, [image, renderer, resizeCount, surahId, verseId, viewport]);
@@ -354,7 +380,7 @@ export function ImageReader({ surahId, verseId, focused = false }: ImageReaderPr
         <text fg="#888888">Loading image for {getSurah(surahId)?.transliteration} {surahId}:{verseId}...</text>
       )}
       {error && <text fg="#ff5555">{error}</text>}
-      {image && <text fg="#777777">{`${status} · surahquran.com · ${image.width}×${image.height} · zoom ${viewport.zoom.toFixed(1)}× · wheel/+/- zoom · drag/arrows pan · 0 reset · C clear ${Math.ceil((preparedImageCacheBytes + brailleGridCacheBytes) / 1024)} KiB`}</text>}
+      {image && <text fg="#777777">{`${status} · ${AYAH_IMAGE_PROVIDER} · ${image.width}×${image.height} · zoom ${viewport.zoom.toFixed(1)}× · wheel/+/- zoom · drag/arrows pan · 0 reset · C clear ${Math.ceil((preparedImageCacheBytes + brailleGridCacheBytes) / 1024)} KiB`}</text>}
     </scrollbox>
   );
 }
