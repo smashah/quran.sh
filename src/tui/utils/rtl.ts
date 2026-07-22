@@ -353,6 +353,7 @@ export function renderedArabicWordRange(
   wordPosition: number,
   width?: number,
   strategy: RtlStrategy = activeStrategy ?? DEFAULT_RTL_STRATEGY,
+  zoom: number = 0,
 ): { readonly start: number; readonly end: number } | null {
   if (!Number.isSafeInteger(wordPosition) || wordPosition < 1) return null;
   const sourceLines = width && width > 0 ? wrapTerminalWords(source, width) : [source];
@@ -365,17 +366,42 @@ export function renderedArabicWordRange(
     const logicalPositions = sourceWords.map(() => nextLogicalPosition++);
     if (VISUALLY_REVERSED_WORD_ORDER.has(strategy)) logicalPositions.reverse();
     const renderedLine = renderedLines[lineIndex]!;
-    const matches = [...renderedLine.matchAll(/\S+/gu)];
+    const matches = zoom <= 0
+      ? [...renderedLine.matchAll(/\S+/gu)].map((match) => ({ index: match.index ?? 0, text: match[0] }))
+      : zoomedWordRanges(renderedLine, zoom);
     if (matches.length !== logicalPositions.length) return null;
     const visualIndex = logicalPositions.indexOf(wordPosition);
     if (visualIndex >= 0) {
       const match = matches[visualIndex]!;
-      const start = renderedOffset + (match.index ?? 0);
-      return { start, end: start + match[0].length };
+      const start = renderedOffset + match.index;
+      return { start, end: start + match.text.length };
     }
     renderedOffset += renderedLine.length + 1;
   }
   return null;
+}
+
+function zoomedWordRanges(renderedLine: string, zoom: number): readonly { index: number; text: string }[] {
+  const boundaryWidth = zoom + 1;
+  const ranges: { index: number; text: string }[] = [];
+  let cursor = 0;
+  while (cursor < renderedLine.length) {
+    while (renderedLine[cursor] === " ") cursor++;
+    if (cursor >= renderedLine.length) break;
+    const start = cursor;
+    let end = renderedLine.length;
+    while (cursor < renderedLine.length) {
+      if (renderedLine[cursor] !== " ") { cursor++; continue; }
+      const separatorStart = cursor;
+      while (renderedLine[cursor] === " ") cursor++;
+      if (cursor - separatorStart >= boundaryWidth) {
+        end = separatorStart;
+        break;
+      }
+    }
+    ranges.push({ index: start, text: renderedLine.slice(start, end) });
+  }
+  return ranges;
 }
 
 export function renderArabicVerseWithStrategy(

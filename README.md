@@ -41,7 +41,7 @@
 - **Full-Text Search** — Search across all translations with `/`
 - **Command Palette** — Quick access to all commands with `Ctrl+P`
 - **Attributed Resource Packs** — Install the public Alafasy streaming index or import verified QUL-compatible JSON/SQLite translations, tafsir, morphology, timing, and Mushaf layouts
-- **Synchronized Word Following** — With user-supplied Quran Foundation credentials, immersive playback lazily requests matching Alafasy audio and word segments under its single online-source agreement
+- **Synchronized Word Following** — Press `p` in the default or immersive reader to lazily play matching Alafasy audio, follow verified word timing, preload one ayah, and continue through surah boundaries
 - **Related Hadith** — Press `h` for explicitly linked Bukhari/Muslim narrations; the official Quran Foundation API is used with user-supplied credentials, and Quran.com's canonical page is the zero-setup path
 - **Local Recitation Following** — Optional Tilawa recognition follows committed verse matches; tentative candidates never move the reader
 
@@ -117,11 +117,25 @@ quran models status
 quran models install official --yes
 ```
 
+### Enable synchronized word following
+
+Synchronized Arabic word highlighting needs no API credentials. Start the default reader or the immersive reader, accept the online-source disclosure, and press `p`:
+
+```bash
+bun run src/index.ts
+# or
+bun run src/index.ts immersive
+```
+
+The reader gets Mishari al-Afasy's per-ayah MP3 and matching timing segments from Quran.com's public `api.quran.com/api/v4` endpoints, then preloads only the next ayah. Successful synchronization displays `FOLLOWING WORD n/N`. `FOLLOWING AYAH` means public timing was unavailable or invalid and playback safely fell back to an installed ayah-level source; only then can the reader offer the small fallback recitation index.
+
+Quran Foundation credentials remain optional for the in-reader tafsir catalogue and related-hadith panel. Copy `.env.example` to `.env` and fill them in only if you want those credentialed features; `.env` is ignored by Git and must never be committed.
+
 ### TUI Keyboard Shortcuts
 
-The default reader remains the established bookmark, cue, reflection, theme, and reading-stats dashboard. Its `/` shortcut opens exact search, `Ctrl+F` opens fuzzy Arabic/translation/transliteration search, `w` opens the same lazy, attributed tafsir reader used by the focused experience, and `W` opens its saved English commentary picker directly. Arabic content width moves to `G` so tafsir uses the same keys in both readers.
+The default reader remains the established bookmark, cue, reflection, theme, and reading-stats dashboard. Its `/` shortcut opens exact search, `Ctrl+F` opens fuzzy Arabic/translation/transliteration search, `p` starts or stops synchronized follow-play, `w` opens the same lazy, attributed tafsir reader used by the focused experience, and `W` opens its saved English commentary picker directly. Arabic content width moves to `G` so tafsir uses the same keys in both readers.
 
-The opt-in `quran immersive` reader opens one source disclosure: `OK` allows the disclosed online Quran providers for that session, `Don't show again` persists the choice, and `Cancel` exits before a request. It then uses `1`–`4` for Focus/Learn/Recite/Memorise, `w` for online study data, `W` to choose a saved English tafsir, `h` for explicitly related hadith, `i` for the online ayah-image view, `p` for follow-play recitation, `v` for local follow-my-recitation, and `g` for the vector OpenTUI Three Arabic reader. While the 3D reader is active, `r` switches ayah/page layout and `f` cycles Uthmani, IndoPak, and verified QCF Tajweed rendering. `M` controls reduced motion, and `j`/`k` move between ayat; follow-play stops the old stream immediately, waits 180 ms for rapid manual navigation to settle before requesting the selected ayah, preloads only its immediate successor, and advances without that delay when an ayah finishes. With `QF_CLIENT_ID` and `QF_CLIENT_SECRET` set, playback directly tries synchronized word following from Quran Foundation and falls back to the installed ayah source if it is unavailable. Persistent downloads and microphone access retain their own keyboard-owned confirmations because they authorize a different capability.
+The opt-in `quran immersive` reader opens one source disclosure: `OK` allows the disclosed online Quran providers for that session, `Don't show again` persists the choice, and `Cancel` exits before a request. It then uses `1`–`4` for Focus/Learn/Recite/Memorise, `w` for online study data, `W` to choose a saved English tafsir, `h` for explicitly related hadith, `i` for the online ayah-image view, `p` for follow-play recitation, `v` for local follow-my-recitation, and `g` for the vector OpenTUI Three Arabic reader. While the 3D reader is active, `r` switches ayah/page layout and `f` cycles Uthmani, IndoPak, and verified QCF Tajweed rendering. `M` controls reduced motion, and `j`/`k` move between ayat; follow-play stops the old stream immediately, waits 180 ms for rapid manual navigation to settle before requesting the selected ayah, preloads only its immediate successor, and advances without that delay when an ayah finishes. Accepted sessions try synchronized word following from Quran.com's keyless public API first, then an optional credentialed Quran Foundation fallback, and finally an installed ayah-level source. Persistent downloads and microphone access retain their own keyboard-owned confirmations because they authorize a different capability.
 
 #### Navigation
 
@@ -132,6 +146,7 @@ The opt-in `quran immersive` reader opens one source disclosure: `OK` allows the
 | `↑/↓` or `j/k` | Navigate surahs or verses |
 | `Enter` | Select surah (in sidebar) |
 | `1-9` | Jump to cue slot |
+| `p` | Start/stop synchronized recitation |
 
 #### Pane Toggles
 
@@ -188,7 +203,7 @@ The opt-in `quran immersive` reader opens one source disclosure: `OK` allows the
 
 The bundled Quran text, translations, bookmarks, and reading history work offline. Immersive mode discloses its online sources once before any request; image mode and image clipboard copying outside that flow retain their own confirmation. Ayah PNGs come from the documented Al Quran Cloud / Islamic Network CDN, redirects and non-PNG bodies are rejected, and fetched images stay in memory only.
 
-Optional packs and Tilawa assets are never downloaded at startup. The first press of `p` can install a checksum-pinned 607 KiB Alafasy verse index from Al Quran Cloud / Islamic Network after confirmation; audio remains remote and streams per ayah. If the user supplies `QF_CLIENT_ID` and `QF_CLIENT_SECRET`, Quran Foundation's official Alafasy ayah endpoint receives the current ayah key and returns one audio URL with its zero-based word segments under the immersive source agreement; metadata and the next-ayah preload are bounded and abort when navigation supersedes them. Failure silently preserves normal ayah-level playback. `w` lazily requests the saved English tafsir from Quran Foundation's documented Content API and `W` changes that selection; missing credentials or failure automatically preserves attributed Tafsir al-Muyassar through the open Al Quran Cloud API. User-obtained QUL imports remain available as explicit local resource management rather than an automatic fallback chain. Tilawa microphone audio stays local and is not retained. See [Optional resources](docs/optional-resources.md) for sources, licensing, installation, removal, and privacy.
+Optional packs and Tilawa assets are never downloaded at startup. Pressing `p` first requests matching Alafasy ayah audio and word segments from Quran.com's keyless public API; the request and immediate-successor preload are bounded and abort when navigation supersedes them. If that source is unavailable, a confirmation can install the checksum-pinned 607 KiB Al Quran Cloud / Islamic Network fallback index, whose audio remains remote and streams per ayah. Optional `QF_CLIENT_ID` and `QF_CLIENT_SECRET` values provide a credentialed timing fallback and enable Quran Foundation's richer tafsir and hadith APIs. `w` lazily requests the saved tafsir and `W` changes that selection; missing credentials or failure automatically preserves attributed Tafsir al-Muyassar through the open Al Quran Cloud API. User-obtained QUL imports remain available as explicit local resource management rather than an automatic fallback chain. Tilawa microphone audio stays local and is not retained. See [Optional resources](docs/optional-resources.md) for sources, licensing, installation, removal, and privacy.
 
 ## Development
 
@@ -234,7 +249,7 @@ The local browser gallery explores illuminated-arch, Mushaf-plane, recitation-fo
 
 Demo recording scripts are in `demos/`. To record a TUI demo:
 
-The v0.8.0 immersive-reader release video is rendered with Remotion and attached to the GitHub release. The earlier v0.7 next-generation recording is reproducible with `vhs demos/next-generation.tape`, while the v0.7.1 consent and recovery flows use `vhs demos/v0.7.1-dialogs.tape`; each VHS tape writes MP4 and GIF output under `demos/`.
+The v0.8.1 release video records the real OpenTUI app in a PTY. Provider responses and its playback clock are deterministic fixtures, so the capture exercises the real layout and interaction states without using or embedding live Quran Foundation credentials. The earlier v0.7 next-generation recording is reproducible with `vhs demos/next-generation.tape`, while the v0.7.1 consent and recovery flows use `vhs demos/v0.7.1-dialogs.tape`; each VHS tape writes MP4 and GIF output under `demos/`.
 
 ```bash
 # 1. Start a tmux session

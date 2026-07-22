@@ -37,6 +37,7 @@ export function HelpDialog(props: HelpDialogProps) {
     { key: "Ctrl+F", desc: "Fuzzy search (Arabic, translation & transliteration)" },
     { key: "w", desc: "Open attributed tafsir for the current ayah" },
     { key: "W", desc: "Choose a saved English tafsir" },
+    { key: "p", desc: "Play/stop synchronized recitation and automatic ayah following" },
     { key: "Ctrl+P", desc: "Command Palette" },
     { key: "I", desc: "Re-index search (via Command Palette)" },
     { key: "C", desc: "Re-calibrate Arabic (via Command Palette)" },

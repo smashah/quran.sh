@@ -8,6 +8,7 @@ export interface LayoutProps {
   sidebar?: ReactNode;
   panel?: ReactNode;
   children?: ReactNode;
+  status?: ReactNode;
   showSidebar?: boolean;
   showPanel?: boolean;
   sidebarFocused?: boolean;
@@ -75,6 +76,8 @@ export function Layout(props: LayoutProps) {
         )}
       </box>
 
+      {props.status}
+
       {/* NC-style keybinding legend */}
       <box height={1} width="100%" backgroundColor={theme.colors.background} flexDirection="row" overflow="hidden">
         {([
@@ -82,6 +85,7 @@ export function Layout(props: LayoutProps) {
           ["/",   "Search"],
           ["^F",  "Fuzzy"],
           ["w",   "Tafsir"],
+          ["p",   "Play"],
           ["b",   "Mark"],
           ["c",   "Copy img"],
           ["s",   "Side"],

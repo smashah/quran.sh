@@ -4,8 +4,6 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { getSurah } from "../data/quran.ts";
 import { presentationFor, READING_MODES, type CapabilityState, type ReadingExperienceMode } from "../features/experience/mode.ts";
 import { useFeatureCommand, useFeatureState } from "../features/react.tsx";
-import type { RecitationPlayer, RecitationPlayerState } from "../features/audio/player.ts";
-import type { TimedRecitationSession } from "../features/audio/timed-session.ts";
 import type { StudyService, StudySnapshot } from "../features/study/service.ts";
 import type { QuranReadingLayout, QuranReadingSurface, QuranScriptStyle, VisualBackdrop } from "../features/spatial/types.ts";
 import { coherentVerseRows, exactLocalPageLines, pageFlowLines, resourceText, wordPosition } from "../features/spatial/reading-surface.ts";
@@ -15,21 +13,18 @@ import { chooseReaderLayout, readerTransitionDuration } from "./responsive.ts";
 import { getRtlStrategy, renderedArabicWordRange, RTL_STRATEGIES, renderArabicVerse, setRtlStrategy, wrapTerminalWords, type RtlStrategy } from "./utils/rtl.ts";
 import { getPreference, setPreference } from "../data/preferences.ts";
 import { parseWordKey, type WordKey } from "../domain/quran-coordinate.ts";
-import { APP_DATA_DIR } from "../data/db.ts";
-import { STARTER_RECITATION_PACK } from "../features/resources/public-recitation.ts";
-import { ChoiceDialog, type DialogChoice } from "./components/choice-dialog.tsx";
+import { ChoiceDialog, type ChoiceDialogState, type DialogChoice } from "./components/choice-dialog.tsx";
+import { PlaybackStatus } from "./components/playback-status.tsx";
 import { TerminalIllumination } from "./components/terminal-illumination.tsx";
 import { ModeProvider } from "./mode.tsx";
 import { ThemeProvider } from "./theme.tsx";
-import { networkPlaybackIdentity } from "../features/audio/network-permission.ts";
 import type { ResourceRow, ResourceTextBlock } from "../features/resources/repository.ts";
 import type { HadithPage, HadithRecord } from "../features/hadith/types.ts";
-import { acceptOnlineSources, onlineSourcesAccepted as sharedOnlineSourcesAccepted } from "../features/network/online-source-consent.ts";
+import { acceptOnlineSources, ONLINE_QURAN_SOURCE_DISCLOSURE, onlineSourcesAccepted as sharedOnlineSourcesAccepted } from "../features/network/online-source-consent.ts";
+import { adjacentVerseKey, useRecitationPlayback, type PlaybackNavigationIntent } from "./use-recitation-playback.ts";
 
 const SELECTED_TAFSIR_RESOURCE_KEY = "selectedTafsirResourceId";
-const PLAYBACK_NAVIGATION_DEBOUNCE_MS = 180;
 type StudySource = "local" | "online" | "hybrid";
-type NavigationIntent = "manual" | "completion";
 
 const LazyImageReader = lazy(async () => {
   const module = await import("./components/image-reader.tsx");
@@ -44,43 +39,6 @@ const LazyFuzzySearchDialog = lazy(async () => {
 const modeLabels: Record<ReadingExperienceMode, string> = {
   focus: "Focus", learn: "Learn", recite: "Recite", memorise: "Memorise",
 };
-
-interface OpenDialog {
-  readonly title: string;
-  readonly description: readonly string[];
-  readonly choices: readonly DialogChoice[];
-  readonly onDismiss?: () => void;
-}
-
-interface PlaybackVisualState {
-  readonly status: "idle" | "loading" | "buffering" | "playing";
-  readonly elapsedMs: number;
-  readonly bufferedMs: number;
-  readonly durationMs: number | null;
-}
-
-const IDLE_PLAYBACK_VISUAL: PlaybackVisualState = {
-  status: "idle",
-  elapsedMs: 0,
-  bufferedMs: 0,
-  durationMs: null,
-};
-
-function playbackDuration(rows: readonly ResourceRow[]): number | null {
-  const duration = rows.flatMap((row) => row.segments ?? []).reduce((largest, segment) => Math.max(largest, segment[2]), 0);
-  return duration > 0 ? duration : null;
-}
-
-function playbackVisualFrom(state: RecitationPlayerState, durationMs: number | null): PlaybackVisualState {
-  if (state.status === "playing") return { status: "playing", elapsedMs: state.elapsedMs, bufferedMs: state.bufferedMs, durationMs };
-  if (state.status === "buffering") return { status: "buffering", elapsedMs: 0, bufferedMs: 0, durationMs };
-  return IDLE_PLAYBACK_VISUAL;
-}
-
-function formatClock(milliseconds: number): string {
-  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
-  return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
-}
 
 function fitTerminalLabel(value: string, width: number): string {
   if (width <= 0) return "";
@@ -118,41 +76,6 @@ function ArabicBlock({
   );
 }
 
-function PlaybackStatus({
-  value,
-  verseKey,
-  activeWord,
-  totalWords,
-  width,
-  timed,
-}: {
-  readonly value: PlaybackVisualState;
-  readonly verseKey: string;
-  readonly activeWord: number | null;
-  readonly totalWords: number;
-  readonly width: number;
-  readonly timed: boolean;
-}) {
-  const barWidth = Math.max(12, Math.min(48, width - 34));
-  const ratio = value.durationMs ? Math.min(1, value.elapsedMs / value.durationMs) : 0;
-  const filled = value.status === "buffering" || value.status === "loading"
-    ? Math.max(1, Math.floor(barWidth * 0.08))
-    : Math.round(barWidth * ratio);
-  const label = value.status === "playing"
-    ? timed && activeWord ? `FOLLOWING WORD ${activeWord}/${Math.max(activeWord, totalWords)}` : "FOLLOWING AYAH"
-    : value.status === "buffering" ? "BUFFERING RECITATION" : "PREPARING RECITATION";
-  const clock = value.durationMs ? `${formatClock(value.elapsedMs)} / ${formatClock(value.durationMs)}` : formatClock(value.elapsedMs);
-  return (
-    <box width={width} height={4} borderStyle="single" borderColor="#315a57" flexDirection="column" paddingLeft={1} paddingRight={1}>
-      <box width="100%" flexDirection="row" justifyContent="space-between">
-        <text fg="#62c2b8"><strong>{`▶ ${label} · ${verseKey}`}</strong></text>
-        <text fg="#78908d">{`${clock} · next ayah readying`}</text>
-      </box>
-      <text fg="#d8b45d">{`${"━".repeat(filled)}${"─".repeat(Math.max(0, barWidth - filled))}`}</text>
-    </box>
-  );
-}
-
 function deepestErrorMessage(cause: unknown, fallback: string): string {
   let current = cause;
   let message = fallback;
@@ -163,17 +86,6 @@ function deepestErrorMessage(cause: unknown, fallback: string): string {
     current = current.cause;
   }
   return message;
-}
-
-function adjacentVerseKey(surahId: number, verseId: number, direction: 1 | -1): `${number}:${number}` | null {
-  const surah = getSurah(surahId);
-  if (!surah) return null;
-  const nextVerse = verseId + direction;
-  if (nextVerse >= 1 && nextVerse <= surah.totalVerses) return `${surahId}:${nextVerse}`;
-  const adjacentSurahId = surahId + direction;
-  const adjacentSurah = getSurah(adjacentSurahId);
-  if (!adjacentSurah) return null;
-  return `${adjacentSurahId}:${direction === 1 ? 1 : adjacentSurah.totalVerses}`;
 }
 
 function selectedTafsirResourceId(): number | undefined {
@@ -424,11 +336,8 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
   const [loadingMoreHadith, setLoadingMoreHadith] = useState(false);
   const [showImage, setShowImage] = useState(false);
   const [imageRetry, setImageRetry] = useState(0);
-  const [activeWordKey, setActiveWordKey] = useState<WordKey | null>(null);
-  const [hasTimings, setHasTimings] = useState(false);
-  const [playMode, setPlayMode] = useState(false);
-  const [playbackVisual, setPlaybackVisual] = useState<PlaybackVisualState>(IDLE_PLAYBACK_VISUAL);
-  const [dialog, setDialog] = useState<OpenDialog | null>(null);
+  const [recognitionWordKey, setRecognitionWordKey] = useState<WordKey | null>(null);
+  const [dialog, setDialog] = useState<ChoiceDialogState | null>(null);
   const [onlineSourcesAccepted, setOnlineSourcesAccepted] = useState(
     () => safeMode || sharedOnlineSourcesAccepted(),
   );
@@ -445,7 +354,6 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
     setRtlStrategy(saved && RTL_STRATEGIES.includes(saved) ? saved : "reshaped_reversed");
   }, []);
   const studyFeature = useFeatureCommand<StudyService>("study");
-  const playerFeature = useFeatureCommand<RecitationPlayer>("recitation");
   const recognitionFeature = useFeatureCommand<TilawaRecognizer>("recognition");
   const spatialFeature = useFeatureCommand<VisualBackdrop & { renderable: import("@opentui/core").Renderable }>("spatial-backdrop");
   const studyState = useFeatureState("study", !safeMode);
@@ -453,20 +361,8 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
   const recognitionState = useFeatureState("recognition", !safeMode);
   const spatialState = useFeatureState("spatial-backdrop", !safeMode);
   const studyRef = useRef<StudyService | null>(null);
-  const playerRef = useRef<RecitationPlayer | null>(null);
-  const playModeRef = useRef(false);
-  const playbackRequestRef = useRef(0);
-  const preloadRequestRef = useRef(0);
-  const navigationIntentRef = useRef<NavigationIntent>("manual");
   const backdropRef = useRef<(VisualBackdrop & { renderable: import("@opentui/core").Renderable }) | null>(null);
   const followRef = useRef<FollowCoordinator | null>(null);
-  const timedRef = useRef<TimedRecitationSession | null>(null);
-  const playbackSubscriptionRef = useRef<(() => void) | null>(null);
-  const packDownloadRef = useRef<AbortController | null>(null);
-  const timedRecitationRequestRef = useRef<AbortController | null>(null);
-  const timedPreloadRequestRef = useRef<AbortController | null>(null);
-  const clearTimedRecitationCacheRef = useRef<(() => void) | null>(null);
-  const clearQuranFoundationClientRef = useRef<(() => void) | null>(null);
   const openStudyRef = useRef<AbortController | null>(null);
   const clearOpenStudyCacheRef = useRef<(() => void) | null>(null);
   const clearQuranFoundationTafsirCacheRef = useRef<(() => void) | null>(null);
@@ -481,29 +377,8 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
   const verseKey = `${surahId}:${verseId}` as const;
   const verseKeyRef = useRef<string>(verseKey);
   const navigationCursorRef = useRef<`${number}:${number}`>(verseKey);
-  const onlineSourcesAcceptedRef = useRef(onlineSourcesAccepted);
   verseKeyRef.current = verseKey;
   navigationCursorRef.current = verseKey;
-  onlineSourcesAcceptedRef.current = onlineSourcesAccepted;
-
-  const setPlaybackFollowing = useCallback((enabled: boolean) => {
-    playModeRef.current = enabled;
-    setPlayMode(enabled);
-  }, []);
-
-  const capabilities: CapabilityState = {
-    text: true,
-    study: studyState.status === "ready",
-    images: true,
-    playback: audioState.status === "ready",
-    timings: hasTimings,
-    recognition: recognitionState.status === "ready",
-    microphone: Boolean(Bun.which("ffmpeg")),
-    spatial: spatialState.status === "ready" || terminalIllumination || gpuIllumination,
-    reducedMotion,
-    safeMode,
-  };
-  const presentation = presentationFor(mode, capabilities);
 
   useEffect(() => {
     if (safeMode || onlineSourcesAccepted) return;
@@ -514,13 +389,7 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
     };
     setDialog({
       title: "Online sources for immersive mode",
-      description: [
-        "Immersive mode uses online Quran sources instead of probing QUL.",
-        "Quran.com supplies Quran fonts and canonical related-hadith pages. Quran Foundation supplies credentialed tafsir, hadith, and timed recitation.",
-        "Al Quran Cloud / Islamic Network supplies keyless Tafsir al-Muyassar, page, image, and audio fallbacks.",
-        "Providers receive your IP and the requested ayah, page, font, or media. quran.sh sends no notes, bookmarks, history, account data, or telemetry.",
-        "Heavy features remain lazy and memory-bounded until you open them.",
-      ],
+      description: ONLINE_QURAN_SOURCE_DISCLOSURE,
       choices: [{
         key: "o",
         label: "OK",
@@ -561,19 +430,39 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
     return () => { focusTimeline.pause(); focusTimeline.resetItems(); };
   }, [focusTimeline, reducedMotion, verseKey]);
 
-  const navigateTo = useCallback((key: `${number}:${number}`, intent: NavigationIntent = "manual") => {
+  const navigateTo = useCallback((key: `${number}:${number}`, _intent: PlaybackNavigationIntent = "manual") => {
     if (key === navigationCursorRef.current) return;
     const [nextSurah, nextVerse] = key.split(":").map(Number);
     if (nextSurah && nextVerse && getSurah(nextSurah)?.verses[nextVerse - 1]) {
-      timedRecitationRequestRef.current?.abort(new Error("Replaced by a newer ayah"));
-      timedPreloadRequestRef.current?.abort(new Error("Replaced by a newer ayah"));
-      playbackRequestRef.current++;
-      navigationIntentRef.current = intent;
       navigationCursorRef.current = key;
       setSurahId(nextSurah);
       setVerseId(nextVerse);
     }
   }, []);
+
+  const playback = useRecitationPlayback({
+    verseKey,
+    safeMode,
+    onlineSourcesAccepted,
+    onNavigate: navigateTo,
+    onMessage: setMessage,
+    onDialog: setDialog,
+  });
+  const activeWordKey = recognitionWordKey ?? playback.activeWordKey;
+  const playMode = playback.isFollowing;
+  const capabilities: CapabilityState = {
+    text: true,
+    study: studyState.status === "ready",
+    images: true,
+    playback: audioState.status === "ready",
+    timings: playback.hasTimings,
+    recognition: recognitionState.status === "ready",
+    microphone: Boolean(Bun.which("ffmpeg")),
+    spatial: spatialState.status === "ready" || terminalIllumination || gpuIllumination,
+    reducedMotion,
+    safeMode,
+  };
+  const presentation = presentationFor(mode, capabilities);
 
   const loadOnlineStudy = useCallback(async (key: string, requestedResourceId = selectedTafsirResourceId()) => {
     const run = async (): Promise<void> => {
@@ -883,370 +772,6 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
     }
   }, [verseKey]);
 
-  const preloadFollowingAyah = useCallback(async (currentKey: string, player: RecitationPlayer) => {
-    const [currentSurah, currentVerse] = currentKey.split(":").map(Number);
-    if (!currentSurah || !currentVerse) return;
-    const nextKey = adjacentVerseKey(currentSurah, currentVerse, 1);
-    const request = ++preloadRequestRef.current;
-    if (!nextKey) {
-      player.clearPreload?.();
-      return;
-    }
-    if (onlineSourcesAcceptedRef.current) {
-      timedPreloadRequestRef.current?.abort(new Error("Replaced by a newer timed preload"));
-      const controller = new AbortController();
-      timedPreloadRequestRef.current = controller;
-      try {
-        const client = await import("../features/quran-foundation/client.ts");
-        clearQuranFoundationClientRef.current = client.clearQuranFoundationClient;
-        if (client.hasQuranFoundationCredentials()) {
-          const provider = await import("../features/audio/quran-foundation-recitation.ts");
-          clearTimedRecitationCacheRef.current = provider.clearQuranFoundationTimedRecitationCache;
-          const row = await provider.fetchQuranFoundationTimedRecitation(nextKey, { signal: controller.signal });
-          if (controller.signal.aborted || request !== preloadRequestRef.current || !playModeRef.current || !row.audioUrl) return;
-          networkPlaybackIdentity(row.audioUrl, row);
-          await player.preload?.(nextKey, row.audioUrl);
-          return;
-        }
-      } catch {
-        if (controller.signal.aborted || request !== preloadRequestRef.current || !playModeRef.current) return;
-        // Fall through to the installed ayah-level source when timed preloading is unavailable.
-      } finally {
-        if (timedPreloadRequestRef.current === controller) timedPreloadRequestRef.current = null;
-      }
-    }
-    try {
-      const service = studyRef.current ?? await studyFeature.activate();
-      if (request !== preloadRequestRef.current || !playModeRef.current) return;
-      studyRef.current = service;
-      const rows = await service.recitation(nextKey);
-      const row = rows.find((candidate) => candidate.audioUrl);
-      const url = row?.audioUrl;
-      if (!url || request !== preloadRequestRef.current || !playModeRef.current) return;
-      networkPlaybackIdentity(url, row);
-      await player.preload?.(nextKey, url);
-    } catch {
-      // Preloading is opportunistic; normal playback retains its own bounded retry path.
-    }
-  }, [studyFeature]);
-
-  const startPlayback = useCallback(async (
-    requestedKey: string,
-    rows: Awaited<ReturnType<StudyService["recitation"]>>,
-    url: string,
-    playbackRequest: number,
-  ) => {
-    try { networkPlaybackIdentity(url, rows.find((row) => row.audioUrl === url)); }
-    catch (cause) { throw new Error(deepestErrorMessage(cause, "Blocked invalid audio URL"), { cause }); }
-    const begin = async () => {
-      const isCurrentRequest = () => playbackRequestRef.current === playbackRequest && verseKeyRef.current === requestedKey;
-      if (!isCurrentRequest()) return;
-      await followRef.current?.stop();
-      if (!isCurrentRequest()) return;
-      followRef.current = null;
-      const player = playerRef.current ?? await playerFeature.activate();
-      if (!isCurrentRequest()) return;
-      playerRef.current = player;
-      timedRef.current?.dispose();
-      timedRef.current = null;
-      setActiveWordKey(null);
-      const [{ createTimedRecitationSession }, { wordTimingsFromSegments }] = await Promise.all([
-        import("../features/audio/timed-session.ts"),
-        import("../features/resources/timing.ts"),
-      ]);
-      if (!isCurrentRequest()) return;
-      const timings = wordTimingsFromSegments(requestedKey, rows.flatMap((row) => row.segments ?? []));
-      const timingsValid = Boolean(timings);
-      const durationMs = playbackDuration(rows);
-      setHasTimings(timingsValid);
-      setPlaybackVisual({ status: "loading", elapsedMs: 0, bufferedMs: 0, durationMs });
-      const timed = createTimedRecitationSession(player, (key) => key === requestedKey ? timings : null);
-      timed.subscribe((state) => setActiveWordKey(state.wordKey));
-      timedRef.current = timed;
-      playbackSubscriptionRef.current?.();
-      let unsubscribePlayback = () => {};
-      unsubscribePlayback = player.subscribe((state) => {
-        if (!("verseKey" in state) || state.verseKey !== requestedKey || !isCurrentRequest()) return;
-        if (state.status === "playing" || state.status === "buffering") {
-          setPlaybackVisual(playbackVisualFrom(state, durationMs));
-        }
-        if (state.status === "ended" && playModeRef.current) {
-          unsubscribePlayback();
-          if (playbackSubscriptionRef.current === unsubscribePlayback) playbackSubscriptionRef.current = null;
-          timedRef.current?.dispose();
-          timedRef.current = null;
-          setActiveWordKey(null);
-          setHasTimings(false);
-          setPlaybackVisual(IDLE_PLAYBACK_VISUAL);
-          const [currentSurah, currentVerse] = requestedKey.split(":").map(Number);
-          const nextKey = currentSurah && currentVerse ? adjacentVerseKey(currentSurah, currentVerse, 1) : null;
-          if (nextKey) {
-            setMessage(`Completed ${requestedKey} · continuing with ${nextKey}…`);
-            navigateTo(nextKey, "completion");
-          } else {
-            preloadRequestRef.current++;
-            setPlaybackFollowing(false);
-            player.clearPreload?.();
-            setMessage(`Completed ${requestedKey} · reached the end of the Quran`);
-          }
-          return;
-        }
-        if (state.status !== "error") return;
-        unsubscribePlayback();
-        if (playbackSubscriptionRef.current === unsubscribePlayback) playbackSubscriptionRef.current = null;
-        preloadRequestRef.current++;
-        setPlaybackFollowing(false);
-        player.clearPreload?.();
-        timedRef.current?.dispose();
-        timedRef.current = null;
-        setActiveWordKey(null);
-        setHasTimings(false);
-        setPlaybackVisual(IDLE_PLAYBACK_VISUAL);
-        setMessage(`${state.message} · playback stopped at ${requestedKey}`);
-        setDialog({
-          title: "Audio stream unavailable",
-          description: [state.message, `Playback stopped at ${requestedKey}; no earlier stream remains active.`],
-          choices: [{
-            key: "r",
-            label: "Retry this ayah",
-            action: () => { setDialog(null); void begin(); },
-          }, {
-            key: "c",
-            label: "Continue reading",
-            action: () => { setDialog(null); setMessage("Playback remains off; reading position preserved"); },
-          }],
-        });
-      });
-      playbackSubscriptionRef.current = unsubscribePlayback;
-      if (!isCurrentRequest()) {
-        timed.dispose();
-        if (timedRef.current === timed) timedRef.current = null;
-        setPlaybackVisual(IDLE_PLAYBACK_VISUAL);
-        return;
-      }
-      setPlaybackFollowing(true);
-      await player.play(requestedKey, url);
-      if (!isCurrentRequest() || !playModeRef.current) return;
-      setMessage(timingsValid ? `Following ${requestedKey} with verified word timing · next ayah preloading` : `Following ${requestedKey} at ayah level · next ayah preloading`);
-      void preloadFollowingAyah(requestedKey, player);
-    };
-    if (playbackRequestRef.current !== playbackRequest || verseKeyRef.current !== requestedKey) return;
-    await begin();
-  }, [navigateTo, playerFeature, preloadFollowingAyah, setPlaybackFollowing]);
-
-  const playRowsWithOptionalTiming = useCallback(async function playWithTiming(
-    requestedKey: string,
-    rows: Awaited<ReturnType<StudyService["recitation"]>>,
-    fallbackUrl: string,
-    playbackRequest: number,
-  ): Promise<void> {
-    const isCurrentRequest = () => playbackRequestRef.current === playbackRequest && verseKeyRef.current === requestedKey;
-    if (!isCurrentRequest()) return;
-    if (rows.some((row) => (row.segments?.length ?? 0) > 0)) {
-      await startPlayback(requestedKey, rows, fallbackUrl, playbackRequest);
-      return;
-    }
-
-    const client = await import("../features/quran-foundation/client.ts");
-    clearQuranFoundationClientRef.current = client.clearQuranFoundationClient;
-    if (!isCurrentRequest() || !client.hasQuranFoundationCredentials()) {
-      await startPlayback(requestedKey, rows, fallbackUrl, playbackRequest);
-      return;
-    }
-
-    if (!onlineSourcesAcceptedRef.current) {
-      await startPlayback(requestedKey, rows, fallbackUrl, playbackRequest);
-      return;
-    }
-
-    timedRecitationRequestRef.current?.abort(new Error("Replaced by a newer timed-recitation request"));
-    const controller = new AbortController();
-    timedRecitationRequestRef.current = controller;
-    setMessage(`Loading verified word timing for ${requestedKey}…`);
-    try {
-      const provider = await import("../features/audio/quran-foundation-recitation.ts");
-      clearTimedRecitationCacheRef.current = provider.clearQuranFoundationTimedRecitationCache;
-      const timedRow = await provider.fetchQuranFoundationTimedRecitation(requestedKey, { signal: controller.signal });
-      if (!isCurrentRequest() || controller.signal.aborted || !timedRow.audioUrl) return;
-      await startPlayback(requestedKey, [timedRow], timedRow.audioUrl, playbackRequest);
-    } catch (cause) {
-      if (!isCurrentRequest() || controller.signal.aborted) return;
-      setMessage(`${deepestErrorMessage(cause, "Verified word timing is unavailable")} · continuing at ayah level`);
-      await startPlayback(requestedKey, rows, fallbackUrl, playbackRequest);
-    } finally {
-      if (timedRecitationRequestRef.current === controller) timedRecitationRequestRef.current = null;
-    }
-  }, [startPlayback]);
-
-  const installStarterPackAndPlay = useCallback(async () => {
-    if (packDownloadRef.current) {
-      setMessage("The recitation pack is already downloading");
-      return;
-    }
-    const controller = new AbortController();
-    const requestedKey = verseKey;
-    const playbackRequest = ++playbackRequestRef.current;
-    packDownloadRef.current = controller;
-    const cancel = () => {
-      controller.abort(new Error("Cancelled by the reader"));
-      setMessage("Cancelling the recitation-pack download…");
-    };
-    setDialog({
-      title: "Downloading recitation pack",
-      description: ["Starting the bounded, checksum-pinned download…"],
-      choices: [{ key: "c", label: "Cancel download", action: cancel }],
-      onDismiss: cancel,
-    });
-    setMessage(`Downloading the ${STARTER_RECITATION_PACK.provider} streaming index…`);
-    try {
-      const { installStarterRecitationPack } = await import("../features/resources/public-recitation.ts");
-      await installStarterRecitationPack(APP_DATA_DIR, {
-        signal: controller.signal,
-        onProgress: (received, total) => {
-          const progress = `${Math.round(received / 1024)}${total ? `/${Math.round(total / 1024)}` : ""} KiB`;
-          setMessage(`Downloading recitation index · ${progress}`);
-          setDialog({
-            title: "Downloading recitation pack",
-            description: [`Received ${progress}. Verification and indexing follow automatically.`],
-            choices: [{ key: "c", label: "Cancel download", action: cancel }],
-            onDismiss: cancel,
-          });
-        },
-      });
-      controller.signal.throwIfAborted();
-      await studyFeature.disable();
-      studyRef.current = null;
-      const service = await studyFeature.activate();
-      controller.signal.throwIfAborted();
-      studyRef.current = service;
-      const rows = await service.recitation(requestedKey);
-      if (playbackRequestRef.current !== playbackRequest || verseKeyRef.current !== requestedKey) return;
-      const url = rows.find((row) => row.audioUrl)?.audioUrl;
-      if (!url) throw new Error("The pack installed but this ayah has no audio mapping. Run `quran resources verify islamic-network.alafasy-128`.");
-      setMessage("Recitation index installed and verified");
-      setDialog(null);
-      await playRowsWithOptionalTiming(requestedKey, rows, url, playbackRequest);
-    } catch (cause) {
-      const cancelled = controller.signal.aborted || (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "cancelled");
-      if (cancelled) {
-        setDialog(null);
-        setMessage("Recitation-pack download cancelled; press p whenever you are ready to retry");
-        return;
-      }
-      const detail = cause instanceof Error ? cause.message : "The recitation pack could not be installed";
-      setMessage(detail);
-      setDialog({
-        title: "Download did not finish",
-        description: [detail, "Check the connection and retry here, or run `quran resources install starter-audio` later."],
-        choices: [{ key: "r", label: "Retry download", action: () => void installStarterPackAndPlay() }],
-      });
-    } finally {
-      if (packDownloadRef.current === controller) packDownloadRef.current = null;
-    }
-  }, [playRowsWithOptionalTiming, studyFeature, verseKey]);
-
-  const playVerse = useCallback(async (requestedKey: string, offerPack: boolean) => {
-    if (safeMode) { setMessage("Playback is off in safe mode"); return; }
-    const playbackRequest = ++playbackRequestRef.current;
-    try {
-      const service = studyRef.current ?? await studyFeature.activate();
-      if (playbackRequestRef.current !== playbackRequest || verseKeyRef.current !== requestedKey) return;
-      studyRef.current = service;
-      const rows = await service.recitation(requestedKey);
-      if (playbackRequestRef.current !== playbackRequest || verseKeyRef.current !== requestedKey) return;
-      const url = rows.find((row) => row.audioUrl)?.audioUrl;
-      if (!url) {
-        if (!offerPack) {
-          setPlaybackFollowing(false);
-          playerRef.current?.clearPreload?.();
-          playbackSubscriptionRef.current?.();
-          playbackSubscriptionRef.current = null;
-          setDialog({
-            title: "Playback paused",
-            description: [`The installed recitation source has no audio mapping for ${requestedKey}.`, "The reader stayed on the requested ayah and stopped every previous stream."],
-            choices: [
-              { key: "r", label: "Retry current ayah", action: () => { setDialog(null); void playVerse(requestedKey, false); } },
-              { key: "s", label: "Stop play mode", action: () => { setDialog(null); setMessage("Playback stopped; reading position preserved"); } },
-            ],
-          });
-          return;
-        }
-        setDialog({
-          title: "Download a recitation pack?",
-          description: [
-            `${STARTER_RECITATION_PACK.reciter} · 128 kbps · ${STARTER_RECITATION_PACK.provider}`,
-            "This downloads and verifies a ~607 KiB verse index. Audio streams only when you press play.",
-            "Provider terms allow personal/educational, non-commercial listening; the reciter retains copyright.",
-            "Playback remains ayah-level unless a compatible local timing pack or the optional Quran Foundation timed source is available.",
-          ],
-          choices: [{ key: "d", label: "Download pack", detail: "License and attribution are stored with the installed pack.", action: () => void installStarterPackAndPlay() }],
-        });
-        return;
-      }
-      await playRowsWithOptionalTiming(requestedKey, rows, url, playbackRequest);
-    } catch (cause) {
-      if (playbackRequestRef.current !== playbackRequest || verseKeyRef.current !== requestedKey) return;
-      setPlaybackFollowing(false);
-      playerRef.current?.clearPreload?.();
-      playbackSubscriptionRef.current?.();
-      playbackSubscriptionRef.current = null;
-      const detail = cause instanceof Error ? cause.message : "Playback unavailable";
-      setDialog({
-        title: "Playback paused",
-        description: [detail, "The current ayah remains selected and every earlier stream has been stopped."],
-        choices: [
-          { key: "r", label: "Retry current ayah", action: () => { setDialog(null); void playVerse(requestedKey, offerPack); } },
-          { key: "s", label: "Stop play mode", action: () => { setDialog(null); setMessage("Playback stopped; reading position preserved"); } },
-        ],
-      });
-    }
-  }, [installStarterPackAndPlay, playRowsWithOptionalTiming, safeMode, setPlaybackFollowing, studyFeature]);
-
-  const play = useCallback(() => playVerse(verseKey, true), [playVerse, verseKey]);
-
-  const stopPlayback = useCallback(() => {
-    playbackRequestRef.current++;
-    preloadRequestRef.current++;
-    timedRecitationRequestRef.current?.abort(new Error("Playback stopped"));
-    timedPreloadRequestRef.current?.abort(new Error("Playback stopped"));
-    setPlaybackFollowing(false);
-    playerRef.current?.stop();
-    playerRef.current?.clearPreload?.();
-    playbackSubscriptionRef.current?.();
-    playbackSubscriptionRef.current = null;
-    timedRef.current?.dispose();
-    timedRef.current = null;
-    setActiveWordKey(null);
-    setHasTimings(false);
-    setPlaybackVisual(IDLE_PLAYBACK_VISUAL);
-    setMessage("Playback stopped; reading position preserved");
-  }, [setPlaybackFollowing]);
-
-  useEffect(() => {
-    if (!playModeRef.current) return;
-    const intent = navigationIntentRef.current;
-    navigationIntentRef.current = "manual";
-    preloadRequestRef.current++;
-    timedRecitationRequestRef.current?.abort(new Error("Ayah changed"));
-    timedPreloadRequestRef.current?.abort(new Error("Ayah changed"));
-    playerRef.current?.stop();
-    playbackSubscriptionRef.current?.();
-    playbackSubscriptionRef.current = null;
-    if (intent === "manual") playerRef.current?.clearPreload?.();
-    timedRef.current?.dispose();
-    timedRef.current = null;
-    setActiveWordKey(null);
-    setHasTimings(false);
-    setPlaybackVisual(IDLE_PLAYBACK_VISUAL);
-    setMessage(intent === "completion" ? `Continuing with ${verseKey}…` : `Moving playback to ${verseKey}…`);
-    if (intent === "completion") {
-      void playVerse(verseKey, false);
-      return;
-    }
-    const timer = setTimeout(() => void playVerse(verseKey, false), PLAYBACK_NAVIGATION_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [playVerse, verseKey]);
-
   const buildReadingSurface = useCallback(async (
     requestedKey: `${number}:${number}`,
     targetLayout: QuranReadingLayout,
@@ -1544,6 +1069,7 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
     if (followRef.current) {
       await followRef.current.stop();
       followRef.current = null;
+      setRecognitionWordKey(null);
       setMessage("Listening stopped; microphone and model session released");
       return;
     }
@@ -1564,7 +1090,7 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
       return;
     }
     try {
-      stopPlayback();
+      playback.stop();
       const [recognizer, { createFfmpegCapture }, { createFollowCoordinator }] = await Promise.all([
         recognitionFeature.activate(),
         import("../features/capture/ffmpeg-source.ts"),
@@ -1572,7 +1098,7 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
       ]);
       const follow = createFollowCoordinator({ capture: createFfmpegCapture(), recognizer, navigate: navigateTo });
       follow.subscribe((state) => {
-        setActiveWordKey(state.word ?? null);
+        setRecognitionWordKey(state.word ?? null);
         setMessage(state.status === "listening"
           ? state.wordMapping === "ambiguous" || state.wordMapping === "unavailable"
             ? "Listening locally · word boundary is unverified, so highlighting stays at ayah level"
@@ -1583,7 +1109,16 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
       followRef.current = follow;
       await follow.start();
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : "Follow mode unavailable"); }
-  }, [navigateTo, recognitionFeature, safeMode, stopPlayback]);
+  }, [navigateTo, playback, recognitionFeature, safeMode]);
+
+  const toggleRecitation = useCallback(async () => {
+    if (!playback.isFollowing && followRef.current) {
+      await followRef.current.stop();
+      followRef.current = null;
+      setRecognitionWordKey(null);
+    }
+    await playback.toggle();
+  }, [playback]);
 
   useEffect(() => {
     backdropRef.current?.setVerse(verseKey, verseId / surah.totalVerses);
@@ -1610,9 +1145,6 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
   }, [activeWordKey, gpuIllumination, verseKey]);
 
   useEffect(() => () => {
-    packDownloadRef.current?.abort(new Error("Reader closed"));
-    timedRecitationRequestRef.current?.abort(new Error("Reader closed"));
-    timedPreloadRequestRef.current?.abort(new Error("Reader closed"));
     openStudyRef.current?.abort(new Error("Reader closed"));
     hadithRequestRef.current?.abort(new Error("Reader closed"));
     pageRequestRef.current?.abort(new Error("Reader closed"));
@@ -1620,13 +1152,6 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
     clearQuranFoundationTafsirCacheRef.current?.();
     clearHadithCacheRef.current?.();
     clearPageCacheRef.current?.();
-    clearTimedRecitationCacheRef.current?.();
-    clearQuranFoundationClientRef.current?.();
-    playerRef.current?.stop();
-    playerRef.current?.clearPreload?.();
-    playbackSubscriptionRef.current?.();
-    playbackSubscriptionRef.current = null;
-    timedRef.current?.dispose();
     void followRef.current?.stop();
     if (backdropRef.current?.renderable.parent) backdropRef.current.renderable.parent.remove(backdropRef.current.renderable);
   }, [renderer]);
@@ -1639,7 +1164,7 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
     if (key.sequence === "W") { void chooseTafsir(); return; }
     if (key.sequence === "h") { setShowStudy(false); void inspectHadith(); return; }
     if (key.sequence === "i") { toggleImage(); return; }
-    if (key.sequence === "p") { if (playModeRef.current) stopPlayback(); else void play(); return; }
+    if (key.sequence === "p") { void toggleRecitation(); return; }
     if (key.sequence === "g") { void toggleSpatial(); return; }
     if (key.sequence === "r") { void toggleReadingLayout(); return; }
     if (key.sequence === "f") { void cycleScriptStyle(); return; }
@@ -1729,12 +1254,12 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
           )}
           {playMode && !gpuIllumination && (
             <PlaybackStatus
-              value={playbackVisual}
+              value={playback.visual}
               verseKey={verseKey}
               activeWord={activeWordNumber}
               totalWords={totalWords}
               width={readerWidth}
-              timed={hasTimings}
+              timed={playback.hasTimings}
             />
           )}
         </box>

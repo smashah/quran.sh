@@ -8,6 +8,13 @@ export interface DialogChoice {
   readonly action: () => void;
 }
 
+export interface ChoiceDialogState {
+  readonly title: string;
+  readonly description: readonly string[];
+  readonly choices: readonly DialogChoice[];
+  readonly onDismiss?: () => void;
+}
+
 export interface ChoiceDialogProps {
   readonly visible: boolean;
   readonly title: string;

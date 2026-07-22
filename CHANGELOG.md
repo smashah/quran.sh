@@ -4,6 +4,21 @@ All notable changes to quran.sh are documented here.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-22
+
+### Added
+
+- Brought synchronized recitation into the established default TUI: `p` starts or stops follow-play from the current ayah, a compact status strip shows buffering, elapsed time, and verified word position, and the active Arabic word is emphasized without disturbing the user's calibrated RTL strategy.
+
+### Changed
+
+- Unified default and immersive playback behind one lazy, memory-bounded controller. Both readers now combine Quran.com's public Alafasy per-ayah audio with the same recitation ID's chapter word windows, normalize them to the ayah clock, preload only the immediate successor, stop stale audio immediately, debounce rapid manual navigation for 180 ms, and advance across surah boundaries when an ayah finishes.
+- Made synchronized follow-play keyless under the shared online-source disclosure. The first use offers `OK`, `Don't show again`, and `Cancel`; credentialed Quran Foundation timing and the installed ayah source remain recovery paths rather than prerequisites.
+
+### Fixed
+
+- Clamped rapid `j`/`k` navigation and progress rendering so a burst of terminal key-repeat cannot move beyond a surah or crash the reader, while the playback controller resolves only the final selected ayah.
+
 ## [0.8.1] - 2026-07-22
 
 ### Changed
@@ -128,7 +143,8 @@ All notable changes to quran.sh are documented here.
 - Stabilized database migrations and test database cleanup.
 
 [0.6.0]: https://github.com/smashah/quran.sh/compare/v0.5.0...v0.6.0
-[Unreleased]: https://github.com/smashah/quran.sh/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/smashah/quran.sh/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/smashah/quran.sh/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/smashah/quran.sh/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/smashah/quran.sh/compare/v0.7.1...v0.8.0
 [0.7.0]: https://github.com/smashah/quran.sh/compare/v0.6.0...v0.7.0

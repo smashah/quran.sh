@@ -1,4 +1,4 @@
-import { useKeyboard, useRenderer } from "@opentui/react";
+import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { lazy, Suspense, useState, useEffect, useCallback, useRef, useReducer } from "react";
 import { Layout } from "./components/layout";
 import { RouteProvider } from "./router";
@@ -36,6 +36,11 @@ import type { Theme } from "./theme";
 import { ModeProvider, useMode } from "./mode";
 import { buildAppCommands, type AppCommandId, type CommandActions } from "./commands.ts";
 import { firstReaderPane, focusReducer, type FocusablePane, type PaneVisibility } from "./focus.ts";
+import { ChoiceDialog, type ChoiceDialogState } from "./components/choice-dialog.tsx";
+import { PlaybackStatus } from "./components/playback-status.tsx";
+import { acceptOnlineSources, ONLINE_QURAN_SOURCE_DISCLOSURE, onlineSourcesAccepted as sharedOnlineSourcesAccepted } from "../features/network/online-source-consent.ts";
+import { parseWordKey } from "../domain/quran-coordinate.ts";
+import { useRecitationPlayback } from "./use-recitation-playback.ts";
 
 export { useTheme };
 export type { Theme };
@@ -92,6 +97,7 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
   const { cycleTheme } = useTheme();
   const { cycleMode } = useMode();
   const renderer = useRenderer();
+  const dimensions = useTerminalDimensions();
 
   const [selectedSurahId, setSelectedSurahId] = useState(savedPrefs.selectedSurahId);
   const [focusedPanel, dispatchFocus] = useReducer(focusReducer, "sidebar");
@@ -137,6 +143,8 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
   const [hasSeenImageWarning, setHasSeenImageWarning] = useState(savedPrefs.hasSeenImageWarning);
   const [showImageWarningDialog, setShowImageWarningDialog] = useState(false);
   const [showTafsir, setShowTafsir] = useState(false);
+  const [playbackDialog, setPlaybackDialog] = useState<ChoiceDialogState | null>(null);
+  const [onlineSourcesAccepted, setOnlineSourcesAccepted] = useState(() => sharedOnlineSourcesAccepted());
   const [openTafsirPicker, setOpenTafsirPicker] = useState(false);
   const closeTafsir = useCallback(() => {
     setShowTafsir(false);
@@ -176,6 +184,55 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
     flashTimerRef.current = setTimeout(() => setFlashMessage(""), 2000);
   }, []);
+
+  const verseKey = `${selectedSurahId}:${currentVerseId}` as const;
+  const navigateForPlayback = useCallback((key: `${number}:${number}`) => {
+    const [nextSurah, nextVerse] = key.split(":").map(Number);
+    if (!nextSurah || !nextVerse || !getSurah(nextSurah)?.verses[nextVerse - 1]) return;
+    setSelectedSurahId(nextSurah);
+    setCurrentVerseId(nextVerse);
+    try { setBookmarkedAyahs(getBookmarkedAyahs(nextSurah)); } catch { /* DB may be unavailable */ }
+  }, []);
+  const playback = useRecitationPlayback({
+    verseKey,
+    safeMode,
+    onlineSourcesAccepted,
+    onNavigate: navigateForPlayback,
+    onMessage: showFlash,
+    onDialog: setPlaybackDialog,
+  });
+
+  const togglePlayback = useCallback(() => {
+    if (playback.isFollowing) {
+      playback.stop();
+      return;
+    }
+    if (safeMode) {
+      showFlash("Playback is off in safe mode");
+      return;
+    }
+    if (onlineSourcesAccepted) {
+      void playback.play();
+      return;
+    }
+    const acceptAndPlay = (persist: boolean) => {
+      acceptOnlineSources(persist);
+      setOnlineSourcesAccepted(true);
+      setPlaybackDialog(null);
+      showFlash("Online Quran sources enabled");
+      void playback.play({ allowOnlineSources: true });
+    };
+    setPlaybackDialog({
+      title: "Online sources for recitation",
+      description: ONLINE_QURAN_SOURCE_DISCLOSURE,
+      choices: [{ key: "o", label: "OK", action: () => acceptAndPlay(false) }, {
+        key: "d", label: "Don't show again", action: () => acceptAndPlay(true),
+      }, {
+        key: "c", label: "Cancel", action: () => { setPlaybackDialog(null); showFlash("Playback remains off"); },
+      }],
+      onDismiss: () => { setPlaybackDialog(null); showFlash("Playback remains off"); },
+    });
+  }, [onlineSourcesAccepted, playback, safeMode, showFlash]);
 
   // Cleanup flash timer on unmount
   useEffect(() => {
@@ -224,7 +281,7 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
   }, [showSidebar, showArabic, showTranslation, showTransliteration, showPanel]);
 
   // True when any modal/overlay is open — used to disable focus on child components
-  const anyModalOpen = showPalette || showReflectionDialog || showHelp || isSearchMode || showMarkSurahDialog || showResetDialog || showFuzzySearch || showCalibration || showImageWarningDialog || showTafsir;
+  const anyModalOpen = showPalette || showReflectionDialog || showHelp || isSearchMode || showMarkSurahDialog || showResetDialog || showFuzzySearch || showCalibration || showImageWarningDialog || showTafsir || playbackDialog !== null;
 
   // Keep the latest state available inside the keyboard handler
   // (avoids stale closures without needing to list every state var as dep)
@@ -235,7 +292,7 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
     showReflectionDialog, reflectionInput, showArabic, showArabicImage, showTranslation, showTransliteration,
     language, panelTab, panelIndex, allBookmarks, allCues, allReflections, anyModalOpen,
     arabicAlign, arabicWidth, arabicFlow, readingMode, hasSeenImageWarning, showImageWarningDialog,
-    showMarkSurahDialog, showResetDialog, showFuzzySearch, showCalibration, showTafsir,
+    showMarkSurahDialog, showResetDialog, showFuzzySearch, showCalibration, showTafsir, playbackDialog,
   });
 
   const paneVisibility = (overrides: Partial<PaneVisibility> = {}): PaneVisibility => ({
@@ -377,6 +434,7 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
         setShowTafsir(true);
       }
     },
+    "toggle-playback": togglePlayback,
     help: () => setShowHelp(true),
     "reset-tracking": () => setShowResetDialog(true),
     reindex: () => {
@@ -429,7 +487,8 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
       s.showMarkSurahDialog ||
       s.showResetDialog ||
       s.showFuzzySearch ||
-      s.showTafsir
+      s.showTafsir ||
+      s.playbackDialog
     ) return;
 
     if (s.showReflectionDialog) {
@@ -639,7 +698,7 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
         const surah = getSurah(s.selectedSurahId);
         if (surah && s.currentVerseId < surah.totalVerses) {
           const newVerse = s.currentVerseId + 1;
-          setCurrentVerseId(prev => prev + 1);
+          setCurrentVerseId((prev) => Math.min(surah.totalVerses, prev + 1));
           if (s.readingMode) {
             try { logVerse(`${s.selectedSurahId}:${newVerse}`); } catch { /* DB */ }
           }
@@ -648,7 +707,7 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
       if (str === 'k' || key.name === 'up') {
         if (s.currentVerseId > 1) {
           const newVerse = s.currentVerseId - 1;
-          setCurrentVerseId(prev => prev - 1);
+          setCurrentVerseId((prev) => Math.max(1, prev - 1));
           if (s.readingMode) {
             try { logVerse(`${s.selectedSurahId}:${newVerse}`); } catch { /* DB */ }
           }
@@ -690,6 +749,13 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
   const { theme } = useTheme();
   // const { resolvedMode } = useMode();
 
+  const activePlaybackCoordinate = playback.activeWordKey ? parseWordKey(playback.activeWordKey) : null;
+  const activePlaybackWord = activePlaybackCoordinate?.key.startsWith(`${verseKey}:`) ? activePlaybackCoordinate.word : null;
+  const selectedVerse = getSurah(selectedSurahId, language)?.verses[currentVerseId - 1];
+  const totalPlaybackWords = selectedVerse?.text.trim().split(/\s+/u).filter(Boolean).length ?? 0;
+  const readerWidth = Math.max(32, Math.floor(dimensions.width * (1 - (showSidebar ? 0.25 : 0) - (showPanel ? 0.25 : 0))));
+  const showPlaybackStatus = playback.isFollowing || playback.visual.status !== "idle";
+
   if (showCalibration) {
     return (
       <RouteProvider key={theme.id}>
@@ -711,6 +777,17 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
         showPanel={showPanel}
         sidebarFocused={focusedPanel === "sidebar"}
         panelFocused={focusedPanel === "panel"}
+        status={showPlaybackStatus ? (
+          <PlaybackStatus
+            value={playback.visual}
+            verseKey={verseKey}
+            activeWord={activePlaybackWord}
+            totalWords={totalPlaybackWords}
+            width={readerWidth}
+            timed={playback.hasTimings}
+            compact
+          />
+        ) : undefined}
         sidebar={
           <box flexDirection="column" height="100%">
             <box height="15%">
@@ -787,6 +864,7 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
           arabicAlign={arabicAlign}
           arabicWidth={arabicWidth}
           arabicFlow={arabicFlow}
+          activeWordKey={playback.activeWordKey}
           onVerseSelect={(verseId) => {
             setCurrentVerseId(verseId);
           }}
@@ -892,6 +970,13 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
           onDismiss={() => setShowFuzzySearch(false)}
         />
       </Layout>
+      <ChoiceDialog
+        visible={playbackDialog !== null}
+        title={playbackDialog?.title ?? ""}
+        description={playbackDialog?.description ?? []}
+        choices={playbackDialog?.choices ?? []}
+        onDismiss={() => playbackDialog?.onDismiss ? playbackDialog.onDismiss() : setPlaybackDialog(null)}
+      />
       {showTafsir && (
         <Suspense fallback={<text position="absolute" top={1} left={2} zIndex={170} fg="#d8b45d">Loading tafsir reader…</text>}>
           <LazyTafsirReader

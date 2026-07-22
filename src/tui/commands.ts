@@ -24,6 +24,7 @@ const COMMAND_DEFINITIONS = [
   ["fuzzy-search", "Ctrl+F", "Fuzzy Search", "Search Arabic, translation and transliteration", "global"],
   ["open-tafsir", "w", "Open Tafsir", "Read attributed commentary for the current ayah", "global"],
   ["choose-tafsir", "W", "Choose Tafsir", "Choose a saved English commentary resource", "global"],
+  ["toggle-playback", "p", "Play Recitation", "Follow or stop synchronized recitation", "global"],
   ["help", "?", "Help", "Show keyboard shortcuts", "global"],
   ["reset-tracking", "X", "Reset Tracking", "Delete reading data by period", "global"],
   ["reindex", "I", "Re-index Search", "Rebuild fuzzy search index", "palette"],

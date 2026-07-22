@@ -3,9 +3,10 @@ import { TextAttributes } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/react";
 import { getSurah } from "../../data/quran";
 import type { VerseRef } from "../../data/quran";
+import { parseWordKey, type WordKey } from "../../domain/quran-coordinate.ts";
 import { useTheme } from "../theme";
 import type { FocusablePane, ArabicAlign, ArabicWidth, ArabicFlow } from "../app";
-import { renderArabicVerse, processArabicText, isRtlLanguage } from "../utils/rtl";
+import { getRtlStrategy, renderedArabicWordRange, renderArabicVerse, processArabicText, isRtlLanguage } from "../utils/rtl";
 
 // React.lazy does not evaluate image-reader (or pngjs) until the user has
 // explicitly enabled the image pane.
@@ -35,6 +36,7 @@ export interface ReaderProps {
   arabicAlign?: ArabicAlign;
   arabicWidth?: ArabicWidth;
   arabicFlow?: ArabicFlow;
+  activeWordKey?: WordKey | null;
   onVerseSelect?: (verseId: number) => void;
 }
 
@@ -44,11 +46,39 @@ export function Reader(props: ReaderProps) {
   const hasSearchResults =
     (props.searchResults && props.searchResults.length > 0) || false;
   const arabicZoom = props.arabicZoom ?? 0;
+  const activeCoordinate = props.activeWordKey ? parseWordKey(props.activeWordKey) : null;
 
   const isArabicFocused = props.focusedPane === "arabic";
   const isTranslationFocused = props.focusedPane === "translation";
   const isTransliterationFocused = props.focusedPane === "transliteration";
   const isAnyReaderFocused = !props.modalOpen && (isArabicFocused || isTranslationFocused || isTransliterationFocused);
+
+  const renderArabicLines = (
+    content: string,
+    activeRange: { readonly start: number; readonly end: number } | null,
+    color: string,
+  ) => {
+    let offset = 0;
+    return content.split("\n").map((line, index) => {
+      const lineStart = offset;
+      const lineEnd = lineStart + line.length;
+      offset = lineEnd + 1;
+      const highlightStart = activeRange ? Math.max(lineStart, activeRange.start) : lineEnd;
+      const highlightEnd = activeRange ? Math.min(lineEnd, activeRange.end) : lineStart;
+      if (highlightStart >= highlightEnd) {
+        return <text key={index} fg={color} attributes={TextAttributes.BOLD}>{line}</text>;
+      }
+      const localStart = highlightStart - lineStart;
+      const localEnd = highlightEnd - lineStart;
+      return (
+        <text key={index} fg={color} attributes={TextAttributes.BOLD}>
+          <span>{line.slice(0, localStart)}</span>
+          <span fg={theme.colors.background} bg={theme.colors.highlight}>{line.slice(localStart, localEnd)}</span>
+          <span>{line.slice(localEnd)}</span>
+        </text>
+      );
+    });
+  };
 
   // Terminal width for line-aware Arabic reverse
   const { width: termCols } = useTerminalDimensions();
@@ -82,11 +112,11 @@ export function Reader(props: ReaderProps) {
     const suffix = extra ? ` ${extra} ` : " ";
     // Build progress bar from current verse position
     const totalVerses = surah?.verses.length ?? 0;
-    const currentVerse = props.currentVerseId ?? 1;
+    const currentVerse = Math.max(1, Math.min(totalVerses, props.currentVerseId ?? 1));
     if (totalVerses === 0) return `${icon}${label}${suffix}`;
     const barWidth = 10;
-    const filled = Math.round((currentVerse / totalVerses) * barWidth);
-    const empty = barWidth - filled;
+    const filled = Math.max(0, Math.min(barWidth, Math.round((currentVerse / totalVerses) * barWidth)));
+    const empty = Math.max(0, barWidth - filled);
     const bar = theme.ornaments.progressFilled.repeat(filled) + theme.ornaments.progressEmpty.repeat(empty);
     const pct = Math.round((currentVerse / totalVerses) * 100);
     return `${icon}${label}${suffix}${bar} ${pct}% `;
@@ -136,12 +166,21 @@ export function Reader(props: ReaderProps) {
 
     // Continuous flow mode for Arabic: join all verses into one text block
     if (isArabic && arabicFlow === "continuous") {
-      const parts = surah.verses.map((v) => {
+      let offset = 0;
+      let activeRange: { start: number; end: number } | null = null;
+      const parts: string[] = [];
+      for (const [index, v] of surah.verses.entries()) {
         const text = renderArabicVerse(v.text, arabicZoom, availableCols);
-        const isCurrent = v.id === (props.currentVerseId ?? 1);
+        if (activeCoordinate?.surah === surah.id && activeCoordinate.ayah === v.id) {
+          const localRange = renderedArabicWordRange(v.text, text, activeCoordinate.word, availableCols, getRtlStrategy() ?? undefined, arabicZoom);
+          if (localRange) activeRange = { start: offset + localRange.start, end: offset + localRange.end };
+        }
         const marker = theme.ornaments.sectionMarker;
-        return `${text} ${marker}${v.id}${marker}`;
-      });
+        const part = `${text} ${marker}${v.id}${marker}`;
+        offset += part.length + (index < surah.verses.length - 1 ? 2 : 0);
+        parts.push(part);
+      }
+      const content = parts.join("  ");
 
       return (
         <scrollbox
@@ -163,11 +202,7 @@ export function Reader(props: ReaderProps) {
           viewportCulling={true}
         >
           <box maxWidth={arabicWidth} paddingLeft={2} paddingRight={2} flexDirection="column">
-            {parts.join("  ").split("\n").map((line, li) => (
-              <text key={li} fg={theme.colors.arabic} attributes={TextAttributes.BOLD}>
-                {line}
-              </text>
-            ))}
+            {renderArabicLines(content, activeRange, theme.colors.arabic)}
           </box>
         </scrollbox>
       );
@@ -208,10 +243,14 @@ export function Reader(props: ReaderProps) {
 
           let textContent: string;
           let textColor: string;
+          let activeRange: { start: number; end: number } | null = null;
 
           if (mode === "arabic") {
             textContent = renderArabicVerse(v.text, arabicZoom, availableCols);
             textColor = isCurrent ? theme.colors.highlight : theme.colors.arabic;
+            if (activeCoordinate?.surah === surah.id && activeCoordinate.ayah === v.id) {
+              activeRange = renderedArabicWordRange(v.text, textContent, activeCoordinate.word, availableCols, getRtlStrategy() ?? undefined, arabicZoom);
+            }
           } else if (mode === "translation") {
             textContent = isRtlTranslation ? processArabicText(v.translation, availableCols) : v.translation;
             textColor = isCurrent ? theme.colors.highlight : theme.colors.translation;
@@ -240,7 +279,7 @@ export function Reader(props: ReaderProps) {
               <text fg={verseNumColor} attributes={TextAttributes.BOLD}>
                 {marker} {v.id}{isBookmarked ? <span fg={bookmarkColor}>{bookmark}</span> : ""}{isRead && !isCurrent ? <span fg={readColor}>{readMark}</span> : ""}
               </text>
-              {textContent.split("\n").map((line, li) => (
+              {isArabic ? renderArabicLines(textContent, activeRange, textColor) : textContent.split("\n").map((line, li) => (
                 <text key={li} fg={textColor} attributes={(isArabic || isRtlTranslation) ? TextAttributes.BOLD : TextAttributes.NONE}>
                   {line}
                 </text>
