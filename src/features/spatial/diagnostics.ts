@@ -41,9 +41,15 @@ export function diagnoseWebGpuFailure(
     };
   }
   if (platform === "darwin") {
+    const deviceFailure = normalized.includes("device")
+      || normalized.includes("adapter")
+      || normalized.includes("metal")
+      || normalized.includes("surface");
     return {
-      summary: "WebGPU could not create a Metal-backed device.",
-      steps: ["Update macOS and retry outside a headless service or remote session.", "Run `quran doctor --gpu`, or use terminal illumination."],
+      summary: deviceFailure
+        ? `OpenTUI Three could not create its Metal/WebGPU renderer: ${reason}`
+        : `OpenTUI Three failed after the Metal device probe: ${reason}`,
+      steps: ["Run `quran doctor --gpu` to separate device availability from renderer startup.", "Retry outside a headless service or remote session, or use terminal illumination."],
     };
   }
   return {

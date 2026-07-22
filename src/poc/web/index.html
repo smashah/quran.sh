@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="Responsive WebGL reading studies for a single ayah in quran.sh." />
+    <title>quran.sh single ayah studies</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="identity">
+          <span class="wordmark">quran.sh</span>
+          <span class="context">Single ayah visual studies</span>
+        </div>
+        <nav class="mode-list" aria-label="Visual studies">
+          <button type="button" class="mode-button is-active" data-mode="arch" disabled>Illuminated arch</button>
+          <button type="button" class="mode-button" data-mode="mushaf" disabled>Mushaf plane</button>
+          <button type="button" class="mode-button" data-mode="focus" disabled>Recitation focus</button>
+          <button type="button" class="mode-button" data-mode="haram" disabled>Haram live</button>
+        </nav>
+      </header>
+
+      <main>
+        <section class="stage" id="stage" data-mode="arch" data-state="idle" aria-labelledby="ayah-reference">
+          <canvas id="webgl-stage" aria-hidden="true"></canvas>
+
+          <div class="load-state" id="load-state">
+            <p>Three.js stays unloaded until requested.</p>
+            <button type="button" class="primary-button" id="load-gallery">Load visual studies</button>
+          </div>
+
+          <div class="error-state" id="error-state" hidden>
+            <p id="error-copy">WebGL could not start.</p>
+            <button type="button" class="secondary-button" id="retry-gallery">Retry WebGL</button>
+          </div>
+
+          <div class="verse-layer" id="verse-layer">
+            <p class="reference" id="ayah-reference">Al-Fatihah 1:5</p>
+            <p class="arabic-verse" lang="ar" dir="rtl" aria-label="إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ">
+              <span data-word="0">إِيَّاكَ</span>
+              <span data-word="1">نَعۡبُدُ</span>
+              <span data-word="2">وَإِيَّاكَ</span>
+              <span data-word="3">نَسۡتَعِينُ</span>
+            </p>
+            <p class="translation">It is You we worship and You we ask for help.</p>
+          </div>
+
+          <div class="live-panel" id="live-panel" hidden>
+            <div class="live-copy" id="live-copy">
+              <h1>Live view of Al-Masjid al-Haram</h1>
+              <p>The official YouTube player loads only after you choose to connect.</p>
+              <button type="button" class="primary-button" id="load-live">Load YouTube stream</button>
+              <a href="https://www.youtube.com/watch?v=bNY8a2BB5Gc" target="_blank" rel="noopener">Open on YouTube</a>
+            </div>
+            <div class="video-shell" id="video-shell" hidden>
+              <div class="video-frame" id="video-frame"></div>
+              <p class="video-note">The stream remains inside YouTube's player. <a href="https://www.youtube.com/watch?v=bNY8a2BB5Gc" target="_blank" rel="noopener">Open it directly if playback is unavailable.</a></p>
+            </div>
+          </div>
+
+          <div class="scene-caption" aria-live="polite">
+            <p id="scene-title">Illuminated arch</p>
+            <p id="scene-description">A wide reading line becomes a two-row composition on narrow screens.</p>
+          </div>
+        </section>
+
+        <section class="control-deck" aria-label="Study controls">
+          <div class="word-controls" id="word-controls">
+            <button type="button" class="secondary-button" id="previous-word" disabled>Previous word</button>
+            <button type="button" class="secondary-button" id="next-word" disabled>Next word</button>
+          </div>
+          <div class="technical-note">
+            <p id="runtime-status" role="status" aria-live="polite">Waiting to load the visual renderer.</p>
+            <p>Arabic is rendered at display resolution in the browser. Motion respects your reduced-motion setting.</p>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

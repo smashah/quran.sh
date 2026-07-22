@@ -336,6 +336,48 @@ export function renderArabicVerse(
   return renderArabicVerseWithStrategy(text, activeStrategy ?? DEFAULT_RTL_STRATEGY, zoom, width);
 }
 
+const VISUALLY_REVERSED_WORD_ORDER = new Set<RtlStrategy>([
+  "reversed",
+  "stripped_reversed",
+  "reshaped_reversed",
+  "reshaped_reversed_bidi",
+  "reshaped_word_reversed",
+  "stripped_reshaped_reversed",
+  "stripped_reshaped_reversed_bidi",
+]);
+
+/** Locate one logical Quran word inside an already rendered RTL verse. */
+export function renderedArabicWordRange(
+  source: string,
+  rendered: string,
+  wordPosition: number,
+  width?: number,
+  strategy: RtlStrategy = activeStrategy ?? DEFAULT_RTL_STRATEGY,
+): { readonly start: number; readonly end: number } | null {
+  if (!Number.isSafeInteger(wordPosition) || wordPosition < 1) return null;
+  const sourceLines = width && width > 0 ? wrapTerminalWords(source, width) : [source];
+  const renderedLines = rendered.split("\n");
+  if (sourceLines.length !== renderedLines.length) return null;
+  let nextLogicalPosition = 1;
+  let renderedOffset = 0;
+  for (let lineIndex = 0; lineIndex < sourceLines.length; lineIndex++) {
+    const sourceWords = sourceLines[lineIndex]!.trim().split(/\s+/u).filter(Boolean);
+    const logicalPositions = sourceWords.map(() => nextLogicalPosition++);
+    if (VISUALLY_REVERSED_WORD_ORDER.has(strategy)) logicalPositions.reverse();
+    const renderedLine = renderedLines[lineIndex]!;
+    const matches = [...renderedLine.matchAll(/\S+/gu)];
+    if (matches.length !== logicalPositions.length) return null;
+    const visualIndex = logicalPositions.indexOf(wordPosition);
+    if (visualIndex >= 0) {
+      const match = matches[visualIndex]!;
+      const start = renderedOffset + (match.index ?? 0);
+      return { start, end: start + match[0].length };
+    }
+    renderedOffset += renderedLine.length + 1;
+  }
+  return null;
+}
+
 export function renderArabicVerseWithStrategy(
   text: string,
   strategy: RtlStrategy,

@@ -81,6 +81,7 @@ export function Layout(props: LayoutProps) {
           ["Tab", "Focus"],
           ["/",   "Search"],
           ["^F",  "Fuzzy"],
+          ["w",   "Tafsir"],
           ["b",   "Mark"],
           ["c",   "Copy img"],
           ["s",   "Side"],

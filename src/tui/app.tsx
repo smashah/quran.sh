@@ -1,5 +1,5 @@
 import { useKeyboard, useRenderer } from "@opentui/react";
-import { useState, useEffect, useCallback, useRef, useReducer } from "react";
+import { lazy, Suspense, useState, useEffect, useCallback, useRef, useReducer } from "react";
 import { Layout } from "./components/layout";
 import { RouteProvider } from "./router";
 import { SurahList } from "./components/surah-list";
@@ -46,6 +46,11 @@ export type ArabicAlign = "right" | "center" | "left";
 export type ArabicWidth = "100%" | "80%" | "60%";
 export type ArabicFlow = "verse" | "continuous";
 
+const LazyTafsirReader = lazy(async () => {
+  const module = await import("./components/tafsir-reader.tsx");
+  return { default: module.TafsirReader };
+});
+
 function useLatest<T>(value: T) {
   const ref = useRef(value);
   ref.current = value;
@@ -83,7 +88,7 @@ if (savedPrefs.rtlStrategy) {
   setRtlStrategy(savedPrefs.rtlStrategy as RtlStrategy);
 }
 
-function AppContent() {
+function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
   const { cycleTheme } = useTheme();
   const { cycleMode } = useMode();
   const renderer = useRenderer();
@@ -131,6 +136,12 @@ function AppContent() {
   const [readVerseIds, setReadVerseIds] = useState<Set<number>>(new Set());
   const [hasSeenImageWarning, setHasSeenImageWarning] = useState(savedPrefs.hasSeenImageWarning);
   const [showImageWarningDialog, setShowImageWarningDialog] = useState(false);
+  const [showTafsir, setShowTafsir] = useState(false);
+  const [openTafsirPicker, setOpenTafsirPicker] = useState(false);
+  const closeTafsir = useCallback(() => {
+    setShowTafsir(false);
+    setOpenTafsirPicker(false);
+  }, []);
 
   useEffect(() => {
     if (savedPrefs.language === "en") return;
@@ -213,7 +224,7 @@ function AppContent() {
   }, [showSidebar, showArabic, showTranslation, showTransliteration, showPanel]);
 
   // True when any modal/overlay is open — used to disable focus on child components
-  const anyModalOpen = showPalette || showReflectionDialog || showHelp || isSearchMode || showMarkSurahDialog || showResetDialog || showFuzzySearch || showCalibration || showImageWarningDialog;
+  const anyModalOpen = showPalette || showReflectionDialog || showHelp || isSearchMode || showMarkSurahDialog || showResetDialog || showFuzzySearch || showCalibration || showImageWarningDialog || showTafsir;
 
   // Keep the latest state available inside the keyboard handler
   // (avoids stale closures without needing to list every state var as dep)
@@ -224,7 +235,7 @@ function AppContent() {
     showReflectionDialog, reflectionInput, showArabic, showArabicImage, showTranslation, showTransliteration,
     language, panelTab, panelIndex, allBookmarks, allCues, allReflections, anyModalOpen,
     arabicAlign, arabicWidth, arabicFlow, readingMode, hasSeenImageWarning, showImageWarningDialog,
-    showMarkSurahDialog, showResetDialog, showFuzzySearch, showCalibration,
+    showMarkSurahDialog, showResetDialog, showFuzzySearch, showCalibration, showTafsir,
   });
 
   const paneVisibility = (overrides: Partial<PaneVisibility> = {}): PaneVisibility => ({
@@ -352,6 +363,20 @@ function AppContent() {
       setFocusedPanel(firstReaderPane(paneVisibility()));
     },
     "fuzzy-search": () => setShowFuzzySearch(true),
+    "open-tafsir": () => {
+      if (safeMode) showFlash("Online tafsir is disabled in safe mode");
+      else {
+        setOpenTafsirPicker(false);
+        setShowTafsir(true);
+      }
+    },
+    "choose-tafsir": () => {
+      if (safeMode) showFlash("Online tafsir is disabled in safe mode");
+      else {
+        setOpenTafsirPicker(true);
+        setShowTafsir(true);
+      }
+    },
     help: () => setShowHelp(true),
     "reset-tracking": () => setShowResetDialog(true),
     reindex: () => {
@@ -403,7 +428,8 @@ function AppContent() {
       s.showImageWarningDialog ||
       s.showMarkSurahDialog ||
       s.showResetDialog ||
-      s.showFuzzySearch
+      s.showFuzzySearch ||
+      s.showTafsir
     ) return;
 
     if (s.showReflectionDialog) {
@@ -866,15 +892,24 @@ function AppContent() {
           onDismiss={() => setShowFuzzySearch(false)}
         />
       </Layout>
+      {showTafsir && (
+        <Suspense fallback={<text position="absolute" top={1} left={2} zIndex={170} fg="#d8b45d">Loading tafsir reader…</text>}>
+          <LazyTafsirReader
+            verseKey={`${selectedSurahId}:${currentVerseId}`}
+            onDismiss={closeTafsir}
+            openPicker={openTafsirPicker}
+          />
+        </Suspense>
+      )}
     </RouteProvider>
   );
 };
 
-function App() {
+function App({ safeMode = false }: { readonly safeMode?: boolean }) {
   return (
     <ModeProvider>
       <ThemeProvider>
-        <AppContent />
+        <AppContent safeMode={safeMode} />
       </ThemeProvider>
     </ModeProvider>
   );

@@ -26,7 +26,7 @@ function emptyStudyService(): StudyService {
 }
 
 describe("immersive confirmation flow", () => {
-  test("play with no pack opens a modal and Escape returns to an unchanged Quran reader", async () => {
+  test("accepted immersive sources lead to the pack modal and Escape returns to the Quran reader", async () => {
     const runtime = createFeatureRuntime({
       study: { load: async () => ({ value: emptyStudyService(), dispose() {} }) },
       recitation: { load: async () => ({ value: {}, dispose() {} }) },
@@ -40,6 +40,13 @@ describe("immersive confirmation flow", () => {
     await setup.renderOnce();
     const initial = setup.captureCharFrame();
     expect(initial).toContain("Al-Fatihah");
+    expect(initial).toContain("Online sources for immersive mode");
+
+    await act(async () => {
+      setup.mockInput.pressEnter();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    await setup.renderOnce();
 
     await act(async () => {
       setup.mockInput.pressKey("p");

@@ -21,6 +21,7 @@ export interface QuranReadingSurface {
 export interface VisualBackdrop {
   readonly kind: "opentui-three";
   setVerse(verseKey: VerseKey, progress: number): void;
+  setActiveWord(wordPosition: number | null): void;
   setMushafContext(context: { readonly page: number; readonly activeLine: number; readonly totalLines: number } | null): void;
   setReadingSurface(surface: QuranReadingSurface): Promise<void>;
   setVisible(visible: boolean): void;

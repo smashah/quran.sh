@@ -15,17 +15,18 @@ afterEach(() => {
 describe("ayah image loading", () => {
   test("uses the canonical source URL and caches successful responses", async () => {
     let requests = 0;
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     globalThis.fetch = (async (input) => {
       requests++;
-      expect(String(input)).toBe("https://surahquran.com/img/ayah/2-255.png");
-      return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+      expect(String(input)).toBe("https://cdn.islamic.network/quran/images/high-resolution/2_255.png");
+      return new Response(png, { status: 200, headers: { "content-type": "image/png" } });
     }) as typeof fetch;
 
     const first = await fetchAyahImage(2, 255);
     const second = await fetchAyahImage(2, 255);
 
-    expect(ayahImageUrl(2, 255)).toBe("https://surahquran.com/img/ayah/2-255.png");
-    expect([...first]).toEqual([1, 2, 3]);
+    expect(ayahImageUrl(2, 255)).toBe("https://cdn.islamic.network/quran/images/high-resolution/2_255.png");
+    expect([...first]).toEqual([...png]);
     expect(second).toBe(first);
     expect(requests).toBe(1);
   });

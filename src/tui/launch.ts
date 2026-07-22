@@ -9,7 +9,7 @@ import type { AnyRuntime } from "../features/react.tsx";
 import { APP_DATA_DIR } from "../data/db.ts";
 
 export interface LaunchTuiOptions {
-  readonly experience?: "classic" | "immersive" | "stream";
+  readonly experience?: "reader" | "immersive" | "stream";
   readonly safeMode?: boolean;
 }
 
@@ -34,7 +34,7 @@ export async function launchTui(options: LaunchTuiOptions = {}): Promise<void> {
   });
   const features = createFeatureRuntime(options.safeMode ? {} : createFeatureCatalog(renderer, APP_DATA_DIR));
   shutdownFeatures = () => features.shutdown();
-  const experience = options.experience ?? "immersive";
+  const experience = options.experience ?? "reader";
   const App = experience === "immersive"
     ? (await import("./immersive-app.tsx")).default
     : experience === "stream"

@@ -1,5 +1,9 @@
 import { parseVerseKey } from "../../domain/quran-coordinate.ts";
-import { readBoundedResponse } from "../network/bounded-response.ts";
+import {
+  clearQuranFoundationClient,
+  fetchQuranFoundationJson,
+  hasQuranFoundationCredentials as hasSharedQuranFoundationCredentials,
+} from "../quran-foundation/client.ts";
 import type { HadithGrade, HadithPage, HadithRecord, HadithText } from "./types.ts";
 
 export const QURAN_FOUNDATION_HADITH_PROVIDER = {
@@ -11,7 +15,6 @@ export const QURAN_FOUNDATION_HADITH_PROVIDER = {
 } as const;
 
 const RESPONSE_LIMIT_BYTES = 1024 * 1024;
-const TOKEN_LIMIT_BYTES = 64 * 1024;
 const CACHE_LIMIT_ITEMS = 24;
 const CACHE_LIMIT_BYTES = 2 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -19,33 +22,9 @@ const MAX_BODY_CHARACTERS = 256 * 1024;
 const UNSAFE_TERMINAL_TEXT = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u;
 const cache = new Map<string, { readonly value: HadithPage; readonly bytes: number }>();
 let cacheBytes = 0;
-let token: { readonly value: string; readonly expiresAt: number; readonly clientId: string; readonly environment: string } | null = null;
-
-interface ProviderConfig {
-  readonly clientId: string;
-  readonly clientSecret: string;
-  readonly environment: "production" | "prelive";
-  readonly authOrigin: string;
-  readonly apiOrigin: string;
-}
 
 export function hasQuranFoundationCredentials(): boolean {
-  return Boolean(process.env.QF_CLIENT_ID?.trim() && process.env.QF_CLIENT_SECRET?.trim());
-}
-
-function providerConfig(): ProviderConfig {
-  const clientId = process.env.QF_CLIENT_ID?.trim();
-  const clientSecret = process.env.QF_CLIENT_SECRET?.trim();
-  if (!clientId || !clientSecret) {
-    throw new Error("Set QF_CLIENT_ID and QF_CLIENT_SECRET to use the official in-reader hadith API");
-  }
-  const configuredEnvironment = process.env.QF_ENV?.trim().toLowerCase() ?? "production";
-  if (configuredEnvironment !== "production" && configuredEnvironment !== "prelive") {
-    throw new Error("QF_ENV must be either production or prelive");
-  }
-  return configuredEnvironment === "prelive"
-    ? { clientId, clientSecret, environment: "prelive", authOrigin: "https://prelive-oauth2.quran.foundation", apiOrigin: "https://apis-prelive.quran.foundation" }
-    : { clientId, clientSecret, environment: "production", authOrigin: QURAN_FOUNDATION_HADITH_PROVIDER.authOrigin, apiOrigin: QURAN_FOUNDATION_HADITH_PROVIDER.apiOrigin };
+  return hasSharedQuranFoundationCredentials();
 }
 
 function remember(key: string, value: HadithPage, bytes: number): void {
@@ -60,17 +39,6 @@ function remember(key: string, value: HadithPage, bytes: number): void {
     cacheBytes -= cache.get(oldest)?.bytes ?? 0;
     cache.delete(oldest);
   }
-}
-
-async function boundedJson(response: Response, signal: AbortSignal, maxBytes: number, label: string): Promise<{ value: unknown; bytes: number }> {
-  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  if (!contentType.includes("application/json")) {
-    await response.body?.cancel().catch(() => {});
-    throw new Error(`${label} returned an unexpected content type`);
-  }
-  const body = await readBoundedResponse(response, { maxBytes, signal, label });
-  try { return { value: JSON.parse(body.toString("utf8")), bytes: body.byteLength }; }
-  catch (cause) { throw new Error(`${label} returned invalid JSON`, { cause }); }
 }
 
 function stringField(raw: Record<string, unknown>, ...keys: string[]): string | undefined {
@@ -214,59 +182,13 @@ function pageFromResponse(value: unknown, verseKey: string, expectedPage: number
   };
 }
 
-async function accessToken(config: ProviderConfig, signal: AbortSignal): Promise<string> {
-  if (token && token.clientId === config.clientId && token.environment === config.environment && token.expiresAt - 30_000 > Date.now()) return token.value;
-  const url = `${config.authOrigin}/oauth2/token`;
-  const response = await fetch(url, {
-    method: "POST",
+async function requestPage(verseKey: string, page: number, language: "ar" | "en", signal: AbortSignal): Promise<{ value: HadithPage; bytes: number }> {
+  const path = `/content/api/v4/hadith_references/by_ayah/${encodeURIComponent(verseKey)}/hadiths?language=${language}&page=${page}&limit=4`;
+  const { value, bytes } = await fetchQuranFoundationJson(path, {
     signal,
-    redirect: "error",
-    headers: {
-      accept: "application/json",
-      authorization: `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString("base64")}`,
-      "content-type": "application/x-www-form-urlencoded",
-    },
-    body: "grant_type=client_credentials&scope=content",
+    maxBytes: RESPONSE_LIMIT_BYTES,
+    label: "Quran Foundation hadith request",
   });
-  if (new URL(response.url || url).origin !== config.authOrigin) {
-    await response.body?.cancel().catch(() => {});
-    throw new Error("Quran Foundation authentication left its approved HTTPS origin");
-  }
-  if (!response.ok) {
-    await response.body?.cancel().catch(() => {});
-    throw new Error(`Quran Foundation authentication failed with HTTP ${response.status}`);
-  }
-  const { value } = await boundedJson(response, signal, TOKEN_LIMIT_BYTES, "Quran Foundation authentication");
-  if (!value || typeof value !== "object") throw new Error("Quran Foundation authentication returned an invalid token");
-  const raw = value as Record<string, unknown>;
-  if (typeof raw.access_token !== "string" || !raw.access_token) throw new Error("Quran Foundation authentication returned no access token");
-  const expiresIn = typeof raw.expires_in === "number" && Number.isFinite(raw.expires_in) ? Math.max(60, raw.expires_in) : 3600;
-  token = { value: raw.access_token, expiresAt: Date.now() + expiresIn * 1000, clientId: config.clientId, environment: config.environment };
-  return token.value;
-}
-
-async function requestPage(config: ProviderConfig, verseKey: string, page: number, language: "ar" | "en", signal: AbortSignal, retryAuth = true): Promise<{ value: HadithPage; bytes: number }> {
-  const authToken = await accessToken(config, signal);
-  const url = `${config.apiOrigin}/content/api/v4/hadith_references/by_ayah/${encodeURIComponent(verseKey)}/hadiths?language=${language}&page=${page}&limit=4`;
-  const response = await fetch(url, {
-    signal,
-    redirect: "error",
-    headers: { accept: "application/json", "x-auth-token": authToken, "x-client-id": config.clientId },
-  });
-  if (new URL(response.url || url).origin !== config.apiOrigin) {
-    await response.body?.cancel().catch(() => {});
-    throw new Error("The Quran Foundation API left its approved HTTPS origin");
-  }
-  if (response.status === 401 && retryAuth) {
-    await response.body?.cancel().catch(() => {});
-    token = null;
-    return requestPage(config, verseKey, page, language, signal, false);
-  }
-  if (!response.ok) {
-    await response.body?.cancel().catch(() => {});
-    throw new Error(`Quran Foundation hadith request failed with HTTP ${response.status}`);
-  }
-  const { value, bytes } = await boundedJson(response, signal, RESPONSE_LIMIT_BYTES, "The Quran Foundation hadith response");
   return { value: pageFromResponse(value, verseKey, page), bytes };
 }
 
@@ -280,15 +202,14 @@ export async function fetchQuranFoundationHadithPage(
   const key = `${verseKey}:${page}`;
   const cached = cache.get(key);
   if (cached) { remember(key, cached.value, cached.bytes); return cached.value; }
-  const config = providerConfig();
   const controller = new AbortController();
   const forwardAbort = () => controller.abort(options.signal?.reason);
   options.signal?.addEventListener("abort", forwardAbort, { once: true });
   const timer = setTimeout(() => controller.abort(new Error("Quran Foundation hadith request timed out")), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   try {
     if (options.signal?.aborted) forwardAbort();
-    const english = await requestPage(config, verseKey, page, "en", controller.signal);
-    const arabic = await requestPage(config, verseKey, page, "ar", controller.signal);
+    const english = await requestPage(verseKey, page, "en", controller.signal);
+    const arabic = await requestPage(verseKey, page, "ar", controller.signal);
     const value = mergeLocalizedPages(english.value, arabic.value);
     remember(key, value, english.bytes + arabic.bytes);
     return value;
@@ -305,5 +226,5 @@ export async function fetchQuranFoundationHadithPage(
 export function clearQuranFoundationHadithCache(): void {
   cache.clear();
   cacheBytes = 0;
-  token = null;
+  clearQuranFoundationClient();
 }

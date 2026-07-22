@@ -17,8 +17,8 @@ describe("OpenTUI Three capability gate", () => {
     expect(await detectWebGpuCapability(async () => { throw new Error("adapter missing"); })).toEqual({ supported: false, reason: "adapter missing" });
   });
 
-  test("composes the GPU surface as a background without entering reader layout", () => {
-    expect(THREE_BACKDROP_LAYOUT).toMatchObject({ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" });
-    expect(THREE_BACKDROP_LAYOUT.zIndex).toBeLessThan(0);
+  test("composes the GPU surface as a bounded foreground without entering reader layout", () => {
+    expect(THREE_BACKDROP_LAYOUT).toMatchObject({ position: "absolute", top: 3, bottom: 8, left: 0, width: "100%" });
+    expect(THREE_BACKDROP_LAYOUT.zIndex).toBeGreaterThan(0);
   });
 });

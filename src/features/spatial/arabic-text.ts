@@ -9,6 +9,7 @@ const FONT_CACHE_SIZE = 2;
 const FONT_TIMEOUT_MS = 10_000;
 const MAX_LINE_GLYPHS = 220;
 const MAX_SURFACE_GLYPHS = 1_200;
+const MAX_RESPONSIVE_AYAH_LINES = 6;
 
 const FONT_URLS = {
   uthmani: `${FONT_ORIGIN}/fonts/quran/hafs/uthmanic_hafs/UthmanicHafs1Ver18.woff2`,
@@ -31,6 +32,82 @@ interface FontCacheEntry {
 }
 
 const fontCache = new Map<string, FontCacheEntry>();
+
+export interface ResponsiveAyahLineRange {
+  readonly start: number;
+  readonly end: number;
+  readonly width: number;
+}
+
+function lineWidth(prefix: readonly number[], spaceWidth: number, start: number, end: number): number {
+  return (prefix[end]! - prefix[start]!) + Math.max(0, end - start - 1) * spaceWidth;
+}
+
+function balancedRanges(wordWidths: readonly number[], spaceWidth: number, lineCount: number): readonly ResponsiveAyahLineRange[] {
+  const count = wordWidths.length;
+  const prefix = [0];
+  for (const width of wordWidths) prefix.push(prefix.at(-1)! + width);
+  const target = (prefix.at(-1)! + Math.max(0, count - lineCount) * spaceWidth) / lineCount;
+  const costs = Array.from({ length: lineCount + 1 }, () => Array<number>(count + 1).fill(Number.POSITIVE_INFINITY));
+  const previous = Array.from({ length: lineCount + 1 }, () => Array<number>(count + 1).fill(-1));
+  costs[0]![0] = 0;
+  for (let lines = 1; lines <= lineCount; lines++) {
+    for (let end = lines; end <= count - (lineCount - lines); end++) {
+      for (let start = lines - 1; start < end; start++) {
+        if (!Number.isFinite(costs[lines - 1]![start]!)) continue;
+        const width = lineWidth(prefix, spaceWidth, start, end);
+        const orphanPenalty = end - start === 1 && count > lineCount * 2 ? target * target : 0;
+        const raggedLastLinePenalty = lines === lineCount && width < target * 0.55
+          ? (target - width) * (target - width) * 2
+          : 0;
+        const cost = costs[lines - 1]![start]! + (width - target) * (width - target) + orphanPenalty + raggedLastLinePenalty;
+        if (cost < costs[lines]![end]!) {
+          costs[lines]![end] = cost;
+          previous[lines]![end] = start;
+        }
+      }
+    }
+  }
+  const ranges: ResponsiveAyahLineRange[] = [];
+  let end = count;
+  for (let lines = lineCount; lines > 0; lines--) {
+    const start = previous[lines]![end]!;
+    if (start < 0) return [{ start: 0, end: count, width: lineWidth(prefix, spaceWidth, 0, count) }];
+    ranges.unshift({ start, end, width: lineWidth(prefix, spaceWidth, start, end) });
+    end = start;
+  }
+  return ranges;
+}
+
+export function responsiveAyahLineRanges(
+  wordWidths: readonly number[],
+  spaceWidth: number,
+  lineHeight: number,
+  viewportAspect: number,
+): readonly ResponsiveAyahLineRange[] {
+  if (wordWidths.length === 0) return [];
+  if (wordWidths.some((width) => !Number.isFinite(width) || width <= 0)
+    || !Number.isFinite(spaceWidth) || spaceWidth < 0
+    || !Number.isFinite(lineHeight) || lineHeight <= 0) {
+    throw new Error("Cannot wrap an ayah with invalid font measurements");
+  }
+  const aspect = Math.max(0.35, Math.min(8, viewportAspect));
+  const maximumLines = Math.min(MAX_RESPONSIVE_AYAH_LINES, Math.max(1, Math.ceil(wordWidths.length / 4)));
+  let best = balancedRanges(wordWidths, spaceWidth, 1);
+  let bestScore = 0;
+  for (let lineCount = 1; lineCount <= maximumLines; lineCount++) {
+    const ranges = balancedRanges(wordWidths, spaceWidth, lineCount);
+    const maximumWidth = Math.max(...ranges.map((range) => range.width));
+    const totalHeight = lineHeight * (lineCount + Math.max(0, lineCount - 1) * 0.28);
+    const fit = Math.min(aspect / maximumWidth, 1 / totalHeight);
+    const score = lineHeight * fit * (1 - Math.max(0, lineCount - 1) * 0.012);
+    if (score > bestScore) {
+      best = ranges;
+      bestScore = score;
+    }
+  }
+  return best;
+}
 
 function fontUrl(script: QuranScriptStyle, page?: number): string {
   if (script === "tajweed") {
@@ -166,8 +243,9 @@ function materialFor(
   color: number,
   active: boolean,
   opacity = 1,
+  wordPosition = 0,
 ): ThreeNamespace.MeshStandardMaterial {
-  const key = `${color}:${active}:${opacity}`;
+  const key = `${color}:${active}:${opacity}:${wordPosition}`;
   const existing = cache.get(key);
   if (existing) return existing;
   const material = new THREE.MeshStandardMaterial({
@@ -192,6 +270,9 @@ function buildLine(
   active: boolean,
   extruded: boolean,
   glyphBudget: number,
+  trackWordPositions: boolean,
+  lastWordPosition?: number,
+  normalize = true,
 ): ThreeNamespace.Group {
   const line = new THREE.Group();
   const materials = new Map<string, ThreeNamespace.MeshStandardMaterial>();
@@ -199,9 +280,17 @@ function buildLine(
   if (run.glyphs.length > MAX_LINE_GLYPHS) throw new Error("A Quran page line exceeded the bounded vector-glyph limit");
   if (run.glyphs.length > glyphBudget) throw new Error("The Quran page exceeded the bounded vector-glyph memory limit");
   let cursorX = 0;
+  let currentWordPosition = trackWordPositions
+    ? lastWordPosition ?? text.trim().split(/\s+/u).filter(Boolean).length
+    : 0;
   for (let index = 0; index < run.glyphs.length; index++) {
     const glyph = run.glyphs[index]!;
     const position = run.positions[index]!;
+    if (glyph.codePoints.includes(32)) {
+      cursorX += position.xAdvance;
+      if (trackWordPositions) currentWordPosition--;
+      continue;
+    }
     const layers = script === "tajweed" ? colorLayers(font, glyph) : [{ glyph }];
     if (script === "tajweed" && layers.length === 0) {
       const colorRecord = font.COLR?.baseGlyphRecord.some((candidate) => candidate.gid === glyph.id);
@@ -224,8 +313,14 @@ function buildLine(
         ? (layer.color.red << 16) | (layer.color.green << 8) | layer.color.blue
         : active ? 0xf3d98b : 0xdce7e4;
       const opacity = "color" in layer && layer.color ? layer.color.alpha / 255 : active ? 1 : 0.82;
-      const mesh = new THREE.Mesh(geometry, materialFor(THREE, materials, palette, active, opacity));
-      mesh.position.z = active ? 0.08 : 0;
+      const baseEmissive = active ? palette : 0x152126;
+      const baseEmissiveIntensity = active ? 4 : 1.15;
+      const baseZ = active ? 0.08 : 0;
+      const mesh = new THREE.Mesh(geometry, materialFor(THREE, materials, palette, active, opacity, currentWordPosition));
+      mesh.position.z = baseZ;
+      if (trackWordPositions) {
+        mesh.userData = { quranWordPosition: currentWordPosition, baseEmissive, baseEmissiveIntensity, baseZ };
+      }
       line.add(mesh);
     }
     cursorX += position.xAdvance;
@@ -234,20 +329,48 @@ function buildLine(
   const bounds = new THREE.Box3().setFromObject(line);
   const width = Math.max(1, bounds.max.x - bounds.min.x);
   const height = Math.max(1, bounds.max.y - bounds.min.y);
-  const targetWidth = active ? 9.35 : 8.65;
-  const targetHeight = active ? 1.72 : 0.72;
-  const scale = Math.min(targetWidth / width, targetHeight / height);
-  line.scale.setScalar(scale);
-  line.position.x = -(bounds.min.x + width / 2) * scale;
-  line.position.y = -(bounds.min.y + height / 2) * scale;
+  if (normalize) {
+    const targetWidth = active ? 9.35 : 8.65;
+    const targetHeight = active ? 1.72 : 0.72;
+    const scale = Math.min(targetWidth / width, targetHeight / height);
+    line.scale.setScalar(scale);
+    line.position.x = -(bounds.min.x + width / 2) * scale;
+    line.position.y = -(bounds.min.y + height / 2) * scale;
+  } else {
+    line.position.x = -(bounds.min.x + width / 2);
+    line.position.y = -(bounds.min.y + height / 2);
+  }
   line.userData.glyphCount = run.glyphs.length;
   return line;
+}
+
+function measuredAdvance(font: LoadedFont, text: string): number {
+  const run = font.layout(text, {}, "arab", "ARA", "rtl");
+  return Math.max(1, run.positions.reduce((total, position) => total + Math.abs(position.xAdvance), 0));
+}
+
+function responsiveAyahLines(font: LoadedFont, text: string, viewportAspect: number): readonly {
+  readonly text: string;
+  readonly startWord: number;
+  readonly endWord: number;
+}[] {
+  const words = text.trim().split(/\s+/u).filter(Boolean);
+  if (words.length === 0) return [];
+  const lineHeight = Math.max(1, Math.abs(font.ascent - font.descent));
+  const spaceWidth = measuredAdvance(font, " ");
+  const ranges = responsiveAyahLineRanges(words.map((word) => measuredAdvance(font, word)), spaceWidth, lineHeight, viewportAspect);
+  return ranges.map((range) => ({
+    text: words.slice(range.start, range.end).join(" "),
+    startWord: range.start + 1,
+    endWord: range.end,
+  }));
 }
 
 export async function buildArabicReadingGroup(
   THREE: ThreeModule,
   surface: QuranReadingSurface,
   signal: AbortSignal,
+  options: { readonly viewportAspect?: number } = {},
 ): Promise<ThreeNamespace.Group> {
   if (surface.lines.length < 1 || surface.lines.length > 15) throw new Error("The spatial reader supports one to fifteen bounded Quran lines");
   const font = await loadFont(surface.script, surface.page, signal);
@@ -255,13 +378,38 @@ export async function buildArabicReadingGroup(
   const group = new THREE.Group();
   try {
     const pageMode = surface.layout === "page";
-    const gap = pageMode ? 0.54 : 1.55;
-    const center = (surface.lines.length - 1) / 2;
+    const ayahLines = !pageMode && surface.lines.length === 1
+      ? responsiveAyahLines(font, surface.lines[0]!.text, options.viewportAspect ?? 2)
+      : [];
+    const renderLines = ayahLines.length > 0
+      ? ayahLines.map((line, index) => ({
+        id: `${surface.lines[0]!.id}-wrap-${index + 1}`,
+        text: line.text,
+        active: surface.lines[0]!.active,
+        endWord: line.endWord,
+      }))
+      : surface.lines.map((line) => ({ ...line, endWord: undefined }));
+    const naturalAyahLines = !pageMode && ayahLines.length > 0;
+    const fontLineHeight = Math.max(1, Math.abs(font.ascent - font.descent));
+    const gap = pageMode ? 0.54 : naturalAyahLines ? fontLineHeight * 1.28 : 1.55;
+    const center = (renderLines.length - 1) / 2;
     let remainingGlyphs = MAX_SURFACE_GLYPHS;
-    for (let index = 0; index < surface.lines.length; index++) {
+    for (let index = 0; index < renderLines.length; index++) {
       signal.throwIfAborted();
-      const input = surface.lines[index]!;
-      const line = buildLine(THREE, font, input.text, surface.script, input.active, !pageMode, remainingGlyphs);
+      const input = renderLines[index]!;
+      const trackWordPositions = !pageMode && (naturalAyahLines || input.id === surface.verseKey);
+      const line = buildLine(
+        THREE,
+        font,
+        input.text,
+        surface.script,
+        input.active,
+        !pageMode,
+        remainingGlyphs,
+        trackWordPositions,
+        input.endWord,
+        !naturalAyahLines,
+      );
       remainingGlyphs -= Number(line.userData.glyphCount ?? 0);
       line.position.y += (center - index) * gap;
       line.position.z = input.active ? 0.3 : pageMode ? -0.25 : 0;
@@ -270,6 +418,7 @@ export async function buildArabicReadingGroup(
       group.add(line);
     }
     group.rotation.x = pageMode ? -0.035 : 0;
+    group.userData.renderedLineCount = renderLines.length;
     return group;
   } catch (cause) {
     disposeObject(group);

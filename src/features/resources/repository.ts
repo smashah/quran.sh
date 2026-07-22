@@ -16,6 +16,7 @@ export interface ResourceRow {
   readonly segments?: readonly [number, number, number][];
   readonly language?: string;
   readonly direction?: "rtl" | "ltr";
+  readonly contentBlocks?: readonly ResourceTextBlock[];
   readonly provenance?: {
     readonly packId: string;
     readonly version: string;
@@ -26,6 +27,11 @@ export interface ResourceRow {
     readonly compatibility?: Readonly<Record<string, string>>;
   };
   readonly raw: Readonly<Record<string, unknown>>;
+}
+
+export interface ResourceTextBlock {
+  readonly text: string;
+  readonly direction: "rtl" | "ltr";
 }
 
 export interface ResourceRepository {

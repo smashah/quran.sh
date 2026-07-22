@@ -1,0 +1,508 @@
+@font-face {
+  font-family: "Quran Uthmani";
+  src: url("/fonts/uthmani.woff2") format("woff2");
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark light;
+  --page: #071014;
+  --surface: #0b171c;
+  --text: #dce7e4;
+  --muted: #7797a5;
+  --border: #355663;
+  --accent: #d8b45d;
+  --accent-ink: #111316;
+  --radius: 14px;
+  font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+  background: var(--page);
+  color: var(--text);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --page: #e8efed;
+    --surface: #f3f7f5;
+    --text: #122126;
+    --muted: #526d76;
+    --border: #78999d;
+    --accent: #8a681a;
+    --accent-ink: #f8f5ea;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100dvh;
+  background:
+    radial-gradient(circle at 74% -20%, color-mix(in srgb, var(--border) 28%, transparent), transparent 42%),
+    var(--page);
+}
+
+button,
+a {
+  font: inherit;
+}
+
+button {
+  border-radius: var(--radius);
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.app-shell {
+  width: min(1500px, 100%);
+  min-height: 100dvh;
+  margin: 0 auto;
+  padding: clamp(12px, 2vw, 28px);
+}
+
+.topbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.3fr);
+  align-items: center;
+  gap: 24px;
+  min-height: 64px;
+  margin-bottom: 12px;
+}
+
+.identity {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  min-width: 0;
+}
+
+.wordmark {
+  color: var(--accent);
+  font-weight: 720;
+  letter-spacing: -0.025em;
+}
+
+.context {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mode-list {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.mode-list::-webkit-scrollbar {
+  display: none;
+}
+
+.mode-button,
+.secondary-button,
+.primary-button {
+  min-height: 42px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 180ms ease, background-color 180ms ease, color 180ms ease, transform 180ms ease;
+}
+
+.mode-button {
+  padding: 9px 13px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.mode-button:hover:not(:disabled),
+.secondary-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.mode-button.is-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 13%, var(--surface));
+  color: var(--accent);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.primary-button,
+.secondary-button {
+  padding: 10px 15px;
+  font-weight: 650;
+}
+
+.primary-button {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.stage {
+  position: relative;
+  isolation: isolate;
+  height: clamp(440px, 72dvh, 820px);
+  min-height: 440px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #071014;
+  box-shadow: inset 0 1px 0 rgb(216 180 93 / 0.14), 0 30px 80px rgb(2 12 15 / 0.24);
+}
+
+#webgl-stage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
+
+.load-state,
+.error-state {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 4;
+  display: grid;
+  justify-items: center;
+  width: min(360px, calc(100% - 32px));
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgb(7 16 20 / 0.88);
+  color: #dce7e4;
+  text-align: center;
+  transform: translate(-50%, -50%);
+  backdrop-filter: blur(16px);
+}
+
+.load-state p,
+.error-state p {
+  margin: 0 0 18px;
+  color: #9bb1b8;
+}
+
+.stage[data-state="ready"] .load-state,
+.stage[data-state="error"] .load-state {
+  display: none;
+}
+
+.verse-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(12px, 2.4vh, 24px);
+  padding: clamp(22px, 6vw, 92px);
+  pointer-events: none;
+  text-align: center;
+}
+
+.reference {
+  margin: 0;
+  color: #88a5ae;
+  font-size: 0.76rem;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.arabic-verse {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.08em 0.22em;
+  max-width: 13em;
+  margin: 0;
+  color: #e7ede9;
+  font-family: "Quran Uthmani", "Geeza Pro", "Noto Naskh Arabic", serif;
+  font-size: clamp(3.1rem, 7.7vw, 8.5rem);
+  font-weight: 500;
+  line-height: 1.48;
+  text-wrap: balance;
+  text-shadow: 0 2px 24px rgb(5 7 11 / 0.62);
+}
+
+.arabic-verse span {
+  border-radius: 0.08em;
+  padding: 0 0.04em;
+  transition: color 180ms ease, background-color 180ms ease, transform 180ms ease;
+}
+
+.arabic-verse span[data-active="true"] {
+  background: rgb(216 180 93 / 0.16);
+  color: #f4d77f;
+  transform: translateY(-0.04em);
+}
+
+.translation {
+  max-width: 48ch;
+  margin: 0;
+  color: #c4d0cd;
+  font-size: clamp(0.92rem, 1.2vw, 1.12rem);
+  line-height: 1.55;
+}
+
+.stage[data-mode="mushaf"] .verse-layer {
+  justify-content: flex-end;
+  padding-bottom: clamp(72px, 12vh, 130px);
+}
+
+.stage[data-mode="mushaf"] .arabic-verse {
+  font-size: clamp(2.7rem, 6.3vw, 6.8rem);
+}
+
+.stage[data-mode="focus"] .arabic-verse span:not([data-active="true"]) {
+  color: #71838a;
+}
+
+.stage[data-mode="haram"] .verse-layer {
+  display: none;
+}
+
+.scene-caption {
+  position: absolute;
+  left: clamp(14px, 2vw, 28px);
+  bottom: clamp(14px, 2vw, 28px);
+  z-index: 3;
+  max-width: min(420px, calc(100% - 28px));
+  padding: 13px 15px;
+  border: 1px solid rgb(53 86 99 / 0.72);
+  border-radius: var(--radius);
+  background: rgb(7 16 20 / 0.72);
+  color: #dce7e4;
+  backdrop-filter: blur(14px);
+}
+
+.scene-caption p {
+  margin: 0;
+}
+
+#scene-title {
+  color: #d8b45d;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+#scene-description {
+  margin-top: 4px;
+  color: #9bb1b8;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.live-panel {
+  position: absolute;
+  inset: clamp(28px, 7vw, 100px);
+  z-index: 2;
+  display: grid;
+  place-items: center;
+}
+
+.live-copy {
+  display: grid;
+  justify-items: start;
+  width: min(520px, 100%);
+  padding: clamp(20px, 4vw, 40px);
+  border: 1px solid rgb(216 180 93 / 0.56);
+  border-radius: var(--radius);
+  background: rgb(7 16 20 / 0.9);
+  color: #dce7e4;
+  backdrop-filter: blur(16px);
+}
+
+.live-copy h1 {
+  max-width: 12ch;
+  margin: 0;
+  color: #eef3f0;
+  font-size: clamp(1.8rem, 4vw, 3.7rem);
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+}
+
+.live-copy p {
+  max-width: 42ch;
+  margin: 16px 0 20px;
+  color: #9bb1b8;
+  line-height: 1.55;
+}
+
+.live-copy a {
+  margin-top: 14px;
+  color: #d8b45d;
+}
+
+.video-shell {
+  width: min(1120px, 100%);
+}
+
+.video-frame {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid rgb(216 180 93 / 0.72);
+  border-radius: var(--radius);
+  background: #071014;
+  box-shadow: 0 24px 70px rgb(1 8 10 / 0.5);
+}
+
+.video-note {
+  margin: 10px 0 0;
+  color: #9bb1b8;
+  font-size: 0.76rem;
+  text-align: center;
+}
+
+.video-note a {
+  color: #d8b45d;
+}
+
+.video-frame iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.control-deck {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(20px, 5vw, 64px);
+  padding: 18px 2px 0;
+}
+
+.word-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.technical-note {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(260px, 1.3fr);
+  gap: 24px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.technical-note p {
+  margin: 0;
+}
+
+#runtime-status {
+  color: var(--text);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    padding: 10px;
+  }
+
+  .topbar {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding-bottom: 4px;
+  }
+
+  .mode-list {
+    justify-content: flex-start;
+  }
+
+  .stage {
+    height: min(72dvh, 680px);
+    min-height: 500px;
+  }
+
+  .verse-layer {
+    justify-content: center;
+    padding: 24px 18px 92px;
+  }
+
+  .arabic-verse {
+    max-width: 7.4em;
+    font-size: clamp(2.7rem, 14vw, 5.2rem);
+    line-height: 1.58;
+  }
+
+  .scene-caption {
+    right: 14px;
+  }
+
+  .live-panel {
+    inset: 56px 14px 112px;
+  }
+
+  .video-frame {
+    min-height: 200px;
+  }
+
+  .control-deck,
+  .technical-note {
+    grid-template-columns: 1fr;
+  }
+
+  .control-deck {
+    gap: 14px;
+  }
+
+  .word-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .load-state,
+  .error-state,
+  .scene-caption,
+  .live-copy {
+    background: #071014;
+    backdrop-filter: none;
+  }
+}

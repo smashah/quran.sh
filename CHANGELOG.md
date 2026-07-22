@@ -4,23 +4,35 @@ All notable changes to quran.sh are documented here.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-22
+
 ### Added
 
+- Added lazy, credentialed Quran Foundation tafsir browsing to both the default and immersive readers: `w` opens the saved English commentary with Ibn Kathir as the initial selection, `W` loads a paginated persisted resource picker, and the default reader's former Arabic-width shortcut moves to `G`. HTML is sanitized into independently directed Arabic and English blocks, and canonical multi-ayah commentary ranges are shown without breaking RTL. The browser-only Quran.com proxy is deliberately avoided; missing credentials or official API failure automatically retains the keyless Tafsir al-Muyassar path.
+- Added optional synchronized word following in the immersive reader from Quran Foundation's official ayah-recitation endpoint: matching Mishari al-Afasy audio and zero-based word segments are requested together under the immersive source agreement, cached within strict bounds, and the installed ayah-level stream remains the automatic fallback. The selected word is emphasized in terminal text and in the 3D ayah surface without rebuilding its glyph geometry.
+- Added a local `bun run poc:web` gallery with four responsive Al-Fatihah 1:5 studies: an illuminated arch, a Mushaf reading plane, a restrained recitation-following treatment, and a WebGL-framed official Haram livestream embed. Three.js is a direct dependency but remains outside normal startup and loads in the gallery only after an explicit action; the YouTube player requires a second action and is never sampled into a texture.
 - Added lazy Arabic, translation, and transliteration search to the unified reader through `/` and `Ctrl+F`, reusing the dashboard's bounded fuzzy-search surface and navigating directly to the selected ayah.
-- Added a consented, lazy Al Quran Cloud study fallback for ayat without an installed compatible QUL tafsir row, with attributed Tafsir al-Muyassar, bounded per-ayah requests and memory cache, RTL-safe rendering, retry/offline exits, per-resource provenance in hybrid panels, and a scrollable study overlay at standard terminal sizes.
-- Added `h` in immersive mode for verse-related hadith: attributed local `hadith` packs take priority, approved user-supplied Quran Foundation credentials enable a deferred bilingual in-reader panel with bounded pagination and RTL-safe Arabic, and the canonical Quran.com page remains the zero-setup fallback without scraping private endpoints.
-- Added a lazy OpenTUI Three Arabic reader with `r` ayah/page layouts and `f` Uthmani/IndoPak/Tajweed script selection: shaped RTL glyphs become vector geometry, ayah text is subtly extruded, page lines lift the active ayah, local QUL layouts take precedence, and the consented Al Quran Cloud fallback is honestly labelled as adaptive page flow.
+- Added a lazy Al Quran Cloud study source with attributed Tafsir al-Muyassar, bounded per-ayah requests and memory cache, RTL-safe rendering, retry/offline exits, and a scrollable study overlay at standard terminal sizes.
+- Added `h` in immersive mode for verse-related hadith: approved user-supplied Quran Foundation credentials enable a deferred bilingual in-reader panel with bounded pagination and RTL-safe Arabic, while the canonical Quran.com page is the zero-configuration path without scraping private endpoints.
+- Added a lazy OpenTUI Three Arabic reader with `r` ayah/page layouts and `f` Uthmani/IndoPak/Tajweed script selection: shaped RTL glyphs become vector geometry, ayah text is subtly extruded, page lines lift the active ayah, and the online Uthmani page source is honestly labelled as adaptive page flow.
 
 ### Changed
 
-- Made the adaptive next-generation reader the default no-argument TUI while retaining the original bookmarks, cues, reflections, themes, and reading-stats dashboard as `quran classic`; both experiences share the saved Quran position.
+- Replaced the immersive reader's repeated QUL-first fallback and per-provider permission prompts with one startup source disclosure offering `OK`, `Don't show again`, and `Cancel`. Accepted sessions use Quran.com-hosted fonts and canonical hadith pages, Quran Foundation's supported credentialed APIs, and documented Al Quran Cloud/Islamic Network fallbacks directly; downloads, microphone access, and actionable failure recovery keep their own dialogs.
+- Increased the opt-in immersive reader's Arabic reading field responsively, made the Arabic bold, and visually subordinated the translation so the ayah remains the primary reading surface even when spatial rendering is off.
+- Kept the established bookmarks, cues, reflections, themes, and reading-stats dashboard as the default no-argument TUI; the experimental reader remains explicitly opt-in through `quran immersive`, and both experiences share the saved Quran position.
 - Moved opt-in ayah images to Al Quran Cloud's documented Islamic Network CDN, preferring its high-resolution source and falling back to its normal-resolution source under the same approved HTTPS origin; redirects and invalid PNG bodies are rejected.
 - Connected the lazy image viewer to immersive mode through `i` and to the no-QUL-layout/WebGPU recovery dialogs, with explicit network consent, retry, and a return to live terminal text at the same ayah.
 - Made immersive playback follow manual ayah navigation and natural audio completion: changing ayat stops the previous stream immediately, aborts its stale preload, and waits 180 ms for rapid navigation to settle before requesting only the final ayah; reaching the end of an ayah advances without that delay, and a single bounded in-memory preload is handed directly to OpenTUI Audio for that transition.
+- Made timed playback and preloading reject chapter-absolute or malformed segments, abort superseded metadata requests during fast navigation, and keep the audio URL and segment data from the same recitation response so a different recording can never be highlighted against them.
 - Replaced the progress-only WebGPU backdrop with actual Quran text while keeping fonts, page data, `fontkit`, and Three.js deferred; disabling the surface clears vector geometry and the two-font memory cache. Tajweed colors come only from verified QCF `code_v2` glyph palettes and are never inferred from Unicode text.
 
 ### Fixed
 
+- Reflowed long spatial ayat into balanced RTL lines using the selected Quran font's shaped word widths and OpenTUI's pixel-correct viewport aspect ratio. The vector surface now uses the available height with small edge insets, rewraps after a debounced terminal resize, and preserves every global word position for synchronized recitation highlighting.
+- Prevented responsive spatial ayat from collapsing to a few pixels by fitting against their stable camera-space anchor instead of the unscaled extrusion bounds, which can temporarily extend behind the camera. Initial OpenTUI resize events also wait for the requested Quran surface to commit instead of aborting it with a competing reflow.
+- Mapped timing word positions through the selected terminal RTL strategy instead of searching rendered text by value, so repeated Arabic words highlight their correct occurrence without changing the calibrated shaping or visual order.
+- Made OpenTUI Three activation await the real renderer with the single-flight initialization behavior from the upstream `threejs-house-demo` branch, removed the redundant throwaway-device probe, and stopped misreporting Quran font or reading-data failures as an unavailable Metal device.
 - Moved the WebGPU Quran surface above the reader's clearing layer and bounded it between the header, translation, and controls, so the shaped Arabic is now a bright foreground reading surface instead of faint geometry hidden behind an empty box.
 
 ## [0.7.1] - 2026-07-21
@@ -104,7 +116,8 @@ All notable changes to quran.sh are documented here.
 - Stabilized database migrations and test database cleanup.
 
 [0.6.0]: https://github.com/smashah/quran.sh/compare/v0.5.0...v0.6.0
-[Unreleased]: https://github.com/smashah/quran.sh/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/smashah/quran.sh/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/smashah/quran.sh/compare/v0.7.1...v0.8.0
 [0.7.0]: https://github.com/smashah/quran.sh/compare/v0.6.0...v0.7.0
 [0.7.1]: https://github.com/smashah/quran.sh/compare/v0.7.0...v0.7.1
 [0.5.0]: https://github.com/smashah/quran.sh/releases/tag/v0.5.0
