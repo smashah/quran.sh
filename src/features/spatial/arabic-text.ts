@@ -172,8 +172,8 @@ function materialFor(
   if (existing) return existing;
   const material = new THREE.MeshStandardMaterial({
     color,
-    emissive: active ? 0x5a4318 : 0x071014,
-    emissiveIntensity: active ? 0.85 : 0.2,
+    emissive: active ? color : 0x152126,
+    emissiveIntensity: active ? 4 : 1.15,
     roughness: 0.58,
     metalness: 0.06,
     transparent: opacity < 1,
@@ -234,8 +234,8 @@ function buildLine(
   const bounds = new THREE.Box3().setFromObject(line);
   const width = Math.max(1, bounds.max.x - bounds.min.x);
   const height = Math.max(1, bounds.max.y - bounds.min.y);
-  const targetWidth = active ? 8.6 : 8.1;
-  const targetHeight = active ? 1.25 : 0.58;
+  const targetWidth = active ? 9.35 : 8.65;
+  const targetHeight = active ? 1.72 : 0.72;
   const scale = Math.min(targetWidth / width, targetHeight / height);
   line.scale.setScalar(scale);
   line.position.x = -(bounds.min.x + width / 2) * scale;

@@ -34,9 +34,10 @@ export async function launchTui(options: LaunchTuiOptions = {}): Promise<void> {
   });
   const features = createFeatureRuntime(options.safeMode ? {} : createFeatureCatalog(renderer, APP_DATA_DIR));
   shutdownFeatures = () => features.shutdown();
-  const App = options.experience === "immersive"
+  const experience = options.experience ?? "immersive";
+  const App = experience === "immersive"
     ? (await import("./immersive-app.tsx")).default
-    : options.experience === "stream"
+    : experience === "stream"
       ? (await import("./stream-app.tsx")).default
       : (await import("./app.tsx")).default;
   createRoot(renderer).render(createElement(FeatureRuntimeProvider, { runtime: features as unknown as AnyRuntime }, createElement(App, { safeMode: options.safeMode })));

@@ -19,6 +19,8 @@ import { APP_DATA_DIR } from "../data/db.ts";
 import { STARTER_RECITATION_PACK } from "../features/resources/public-recitation.ts";
 import { ChoiceDialog, type DialogChoice } from "./components/choice-dialog.tsx";
 import { TerminalIllumination } from "./components/terminal-illumination.tsx";
+import { ModeProvider } from "./mode.tsx";
+import { ThemeProvider } from "./theme.tsx";
 import { networkPlaybackIdentity } from "../features/audio/network-permission.ts";
 import type { ResourceRow } from "../features/resources/repository.ts";
 import type { HadithPage, HadithRecord } from "../features/hadith/types.ts";
@@ -28,11 +30,18 @@ const ONLINE_IMAGE_PERMISSION_KEY = "onlineImage.islamicNetworkCdnAccepted.v1";
 const ONLINE_HADITH_PERMISSION_KEY = "onlineHadith.quranFoundationAccepted.v1";
 const ONLINE_PAGE_PERMISSION_KEY = "onlinePage.alquranCloudAccepted.v1";
 const SPATIAL_TEXT_PERMISSION_KEY = "spatialText.quranComFontsAccepted.v1";
+const PLAYBACK_NAVIGATION_DEBOUNCE_MS = 180;
 type StudySource = "local" | "online" | "hybrid";
+type NavigationIntent = "manual" | "completion";
 
 const LazyImageReader = lazy(async () => {
   const module = await import("./components/image-reader.tsx");
   return { default: module.ImageReader };
+});
+
+const LazyFuzzySearchDialog = lazy(async () => {
+  const module = await import("./components/fuzzy-search-dialog.tsx");
+  return { default: module.FuzzySearchDialog };
 });
 
 const modeLabels: Record<ReadingExperienceMode, string> = {
@@ -139,7 +148,7 @@ function StudyPanel({
   const sourceLabel = source === "hybrid" ? "LOCAL + ONLINE" : source === "online" ? "ONLINE" : "LOCAL";
   const position = overlay
     ? { position: "absolute" as const, top: 3, left: 2, zIndex: 150, backgroundColor: "#081017" }
-    : {};
+    : { zIndex: 150, backgroundColor: "#081017" };
   return (
     <box {...position} width={width} height={height} borderStyle="rounded" borderColor="#476672" flexDirection="column" padding={1}>
       <text fg="#d8b45d">{`Study · ${verseKey} · ${sourceLabel} · [/] scroll · w closes`}</text>
@@ -209,7 +218,7 @@ function HadithPanel({
   const sourceLabel = value?.source === "quran-foundation" ? "ONLINE · QURAN FOUNDATION" : "LOCAL PACK";
   const position = overlay
     ? { position: "absolute" as const, top: 3, left: 2, zIndex: 155, backgroundColor: "#081017" }
-    : {};
+    : { zIndex: 155, backgroundColor: "#081017" };
   const renderRecord = (record: HadithRecord) => (
     <box key={record.id} flexDirection="column" marginBottom={1}>
       {displayLines(record.name).map((line, index) => <text key={`${record.id}-name-${index}`} fg="#d8b45d">{line}</text>)}
@@ -250,12 +259,19 @@ function HadithPanel({
   );
 }
 
-export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean }) {
+function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
   const renderer = useRenderer();
   const dimensions = useTerminalDimensions();
   const layout = chooseReaderLayout(dimensions.width, dimensions.height);
-  const [surahId, setSurahId] = useState(1);
-  const [verseId, setVerseId] = useState(1);
+  const [surahId, setSurahId] = useState(() => {
+    const saved = Number(getPreference("selectedSurahId") ?? 1);
+    return getSurah(saved) ? saved : 1;
+  });
+  const [verseId, setVerseId] = useState(() => {
+    const savedSurah = Number(getPreference("selectedSurahId") ?? 1);
+    const savedVerse = Number(getPreference("currentVerseId") ?? 1);
+    return getSurah(savedSurah)?.verses[savedVerse - 1] ? savedVerse : 1;
+  });
   const [mode, setMode] = useState<ReadingExperienceMode>("focus");
   const [reducedMotion, setReducedMotion] = useState(() => getPreference("reducedMotion") === "true");
   const [message, setMessage] = useState("A calm space for attentive reading");
@@ -271,6 +287,8 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   const [hasTimings, setHasTimings] = useState(false);
   const [playMode, setPlayMode] = useState(false);
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
+  const [showSearch, setShowSearch] = useState(false);
+  const searchOpenRef = useRef(false);
   const [terminalIllumination, setTerminalIllumination] = useState(false);
   const [gpuIllumination, setGpuIllumination] = useState(false);
   const [readingLayout, setReadingLayout] = useState<QuranReadingLayout>("ayah");
@@ -294,6 +312,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   const playModeRef = useRef(false);
   const playbackRequestRef = useRef(0);
   const preloadRequestRef = useRef(0);
+  const navigationIntentRef = useRef<NavigationIntent>("manual");
   const backdropRef = useRef<(VisualBackdrop & { renderable: import("@opentui/core").Renderable }) | null>(null);
   const followRef = useRef<FollowCoordinator | null>(null);
   const timedRef = useRef<TimedRecitationSession | null>(null);
@@ -311,7 +330,9 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   const verse = surah.verses[verseId - 1]!;
   const verseKey = `${surahId}:${verseId}` as const;
   const verseKeyRef = useRef<string>(verseKey);
+  const navigationCursorRef = useRef<`${number}:${number}`>(verseKey);
   verseKeyRef.current = verseKey;
+  navigationCursorRef.current = verseKey;
 
   const setPlaybackFollowing = useCallback((enabled: boolean) => {
     playModeRef.current = enabled;
@@ -333,6 +354,11 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   const presentation = presentationFor(mode, capabilities);
 
   useEffect(() => {
+    setPreference("selectedSurahId", String(surahId));
+    setPreference("currentVerseId", String(verseId));
+  }, [surahId, verseId]);
+
+  useEffect(() => {
     focusTimeline.pause();
     focusTimeline.resetItems();
     const duration = readerTransitionDuration(reducedMotion);
@@ -347,9 +373,13 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
     return () => { focusTimeline.pause(); focusTimeline.resetItems(); };
   }, [focusTimeline, reducedMotion, verseKey]);
 
-  const navigateTo = useCallback((key: `${number}:${number}`) => {
+  const navigateTo = useCallback((key: `${number}:${number}`, intent: NavigationIntent = "manual") => {
+    if (key === navigationCursorRef.current) return;
     const [nextSurah, nextVerse] = key.split(":").map(Number);
     if (nextSurah && nextVerse && getSurah(nextSurah)?.verses[nextVerse - 1]) {
+      playbackRequestRef.current++;
+      navigationIntentRef.current = intent;
+      navigationCursorRef.current = key;
       setSurahId(nextSurah);
       setVerseId(nextVerse);
     }
@@ -756,10 +786,32 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       timed.subscribe((state) => setActiveWordKey(state.wordKey));
       timedRef.current = timed;
       playbackSubscriptionRef.current?.();
-      playbackSubscriptionRef.current = player.subscribe((state) => {
-        if (state.status !== "error" || state.verseKey !== requestedKey || verseKeyRef.current !== requestedKey) return;
-        playbackSubscriptionRef.current?.();
-        playbackSubscriptionRef.current = null;
+      let unsubscribePlayback = () => {};
+      unsubscribePlayback = player.subscribe((state) => {
+        if (!("verseKey" in state) || state.verseKey !== requestedKey || !isCurrentRequest()) return;
+        if (state.status === "ended" && playModeRef.current) {
+          unsubscribePlayback();
+          if (playbackSubscriptionRef.current === unsubscribePlayback) playbackSubscriptionRef.current = null;
+          timedRef.current?.dispose();
+          timedRef.current = null;
+          setActiveWordKey(null);
+          setHasTimings(false);
+          const [currentSurah, currentVerse] = requestedKey.split(":").map(Number);
+          const nextKey = currentSurah && currentVerse ? adjacentVerseKey(currentSurah, currentVerse, 1) : null;
+          if (nextKey) {
+            setMessage(`Completed ${requestedKey} · continuing with ${nextKey}…`);
+            navigateTo(nextKey, "completion");
+          } else {
+            preloadRequestRef.current++;
+            setPlaybackFollowing(false);
+            player.clearPreload?.();
+            setMessage(`Completed ${requestedKey} · reached the end of the Quran`);
+          }
+          return;
+        }
+        if (state.status !== "error") return;
+        unsubscribePlayback();
+        if (playbackSubscriptionRef.current === unsubscribePlayback) playbackSubscriptionRef.current = null;
         preloadRequestRef.current++;
         setPlaybackFollowing(false);
         player.clearPreload?.();
@@ -782,6 +834,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
           }],
         });
       });
+      playbackSubscriptionRef.current = unsubscribePlayback;
       if (!isCurrentRequest()) {
         timed.dispose();
         if (timedRef.current === timed) timedRef.current = null;
@@ -816,7 +869,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       return;
     }
     await begin();
-  }, [playerFeature, preloadFollowingAyah, setPlaybackFollowing]);
+  }, [navigateTo, playerFeature, preloadFollowingAyah, setPlaybackFollowing]);
 
   const installStarterPackAndPlay = useCallback(async () => {
     if (packDownloadRef.current) {
@@ -961,13 +1014,24 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
 
   useEffect(() => {
     if (!playModeRef.current) return;
+    const intent = navigationIntentRef.current;
+    navigationIntentRef.current = "manual";
     preloadRequestRef.current++;
     playerRef.current?.stop();
+    playbackSubscriptionRef.current?.();
+    playbackSubscriptionRef.current = null;
+    if (intent === "manual") playerRef.current?.clearPreload?.();
     timedRef.current?.dispose();
     timedRef.current = null;
     setActiveWordKey(null);
-    setMessage(`Moving playback to ${verseKey}…`);
-    void playVerse(verseKey, false);
+    setHasTimings(false);
+    setMessage(intent === "completion" ? `Continuing with ${verseKey}…` : `Moving playback to ${verseKey}…`);
+    if (intent === "completion") {
+      void playVerse(verseKey, false);
+      return;
+    }
+    const timer = setTimeout(() => void playVerse(verseKey, false), PLAYBACK_NAVIGATION_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
   }, [playVerse, verseKey]);
 
   const resolveLocalMushafRow = useCallback(async (): Promise<ResourceRow | null> => {
@@ -1439,7 +1503,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   }, [renderer]);
 
   useKeyboard((key) => {
-    if (dialog) return;
+    if (dialog || searchOpenRef.current) return;
     if (key.sequence === "q") { renderer.destroy(); return; }
     if (key.sequence && ["1", "2", "3", "4"].includes(key.sequence)) { setMode(READING_MODES[Number(key.sequence) - 1]!); return; }
     if (key.sequence === "w") { setShowHadith(false); void inspect(); return; }
@@ -1450,6 +1514,20 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
     if (key.sequence === "r") { void toggleReadingLayout(); return; }
     if (key.sequence === "f") { void cycleScriptStyle(); return; }
     if (key.sequence === "v") { void toggleFollow(); return; }
+    if (key.sequence === "/" || (key.ctrl && key.name === "f")) {
+      searchOpenRef.current = true;
+      openStudyRef.current?.abort(new Error("Study request cancelled while Quran search opened"));
+      openStudyRef.current = null;
+      hadithRequestRef.current?.abort(new Error("Hadith request cancelled while Quran search opened"));
+      hadithRequestRef.current = null;
+      setLoadingMoreHadith(false);
+      setShowStudy(false);
+      setShowHadith(false);
+      setShowImage(false);
+      activePaneRef.current = "reader";
+      setShowSearch(true);
+      return;
+    }
     if (key.sequence === "M") {
       const next = !reducedMotion;
       setReducedMotion(next);
@@ -1459,12 +1537,14 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       return;
     }
     if (key.name === "down" || key.sequence === "j") {
-      if (verseId < surah.totalVerses) setVerseId((value) => value + 1);
-      else if (surahId < 114) { setSurahId((value) => value + 1); setVerseId(1); }
+      const [cursorSurah, cursorVerse] = navigationCursorRef.current.split(":").map(Number);
+      const nextKey = adjacentVerseKey(cursorSurah!, cursorVerse!, 1);
+      if (nextKey) navigateTo(nextKey);
     }
     if (key.name === "up" || key.sequence === "k") {
-      if (verseId > 1) setVerseId((value) => value - 1);
-      else if (surahId > 1) { const previous = getSurah(surahId - 1)!; setSurahId((value) => value - 1); setVerseId(previous.totalVerses); }
+      const [cursorSurah, cursorVerse] = navigationCursorRef.current.split(":").map(Number);
+      const previousKey = adjacentVerseKey(cursorSurah!, cursorVerse!, -1);
+      if (previousKey) navigateTo(previousKey);
     }
   });
 
@@ -1481,20 +1561,24 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
 
   return (
     <box width="100%" height="100%" flexDirection="column" zIndex={1}>
-      <box height={3} flexDirection="row" borderStyle="rounded" borderColor="#355663" justifyContent="space-between" paddingLeft={1} paddingRight={1}>
+      <box height={3} zIndex={10} flexDirection="row" borderStyle="rounded" borderColor="#355663" justifyContent="space-between" paddingLeft={1} paddingRight={1}>
         <text fg="#d8b45d">{`☾  ${surahId}. ${surah.transliteration} · ${surah.translation}`}</text>
         <text fg="#7797a5">{`${modeLabels[mode]} · ${layout.mode}${playMode ? " · FOLLOW PLAY" : ""}${gpuIllumination ? ` · 3D ${scriptStyle.toLocaleUpperCase()} ${readingLayout.toLocaleUpperCase()}` : terminalIllumination ? " · CELL ARCH" : ""}${safeMode ? " · SAFE" : ""}  ☽`}</text>
       </box>
       <box flexGrow={1} flexDirection="row">
         <box flexGrow={1} flexDirection="column" alignItems="center" justifyContent="center" paddingLeft={2} paddingRight={2}>
           {!gpuIllumination && layout.mode !== "compact" && previous && <text fg="#354249">{renderArabicVerse(previous.text, 0, lineWidth)}</text>}
-          <box width="100%" minHeight={7} marginTop={1} marginBottom={1} padding={1} borderStyle="double" borderColor={terminalIllumination || gpuIllumination ? "#69a6a4" : focusGlow < 0.55 ? "#5b4c2d" : "#8b7441"} alignItems="center" justifyContent="center">
+          <box width="100%" minHeight={7} flexGrow={gpuIllumination ? 1 : undefined} zIndex={gpuIllumination ? 3 : undefined} marginTop={1} marginBottom={1} padding={1} borderStyle="double" borderColor={terminalIllumination || gpuIllumination ? "#8cd4cf" : focusGlow < 0.55 ? "#5b4c2d" : "#8b7441"} alignItems="center" justifyContent="center">
             {terminalIllumination && <TerminalIllumination verseKey={verseKey} />}
-            {gpuIllumination ? <text> </text> : activeRenderedIndex >= 0 ? (
+            {gpuIllumination ? null : activeRenderedIndex >= 0 ? (
               <text fg="#f2ead8"><span>{arabic.slice(0, activeRenderedIndex)}</span><span fg="#05070b" bg="#d8b45d">{activeRenderedWord}</span><span>{arabic.slice(activeRenderedIndex + activeRenderedWord.length)}</span></text>
             ) : <text fg="#f2ead8">{arabic}</text>}
           </box>
-          {presentation.showTranslation && <text fg="#aeb8b6">{verse.translation}</text>}
+          {presentation.showTranslation && (gpuIllumination ? (
+            <box height={3} zIndex={10} alignItems="center" justifyContent="center" paddingLeft={2} paddingRight={2}>
+              <text fg="#d5ddda">{verse.translation}</text>
+            </box>
+          ) : <text fg="#d5ddda">{verse.translation}</text>)}
           {!gpuIllumination && !presentation.hideNextVerse && layout.mode === "immersive" && next && <text fg="#354249">{renderArabicVerse(next.text, 0, lineWidth)}</text>}
         </box>
         {showStudy && layout.showAuxiliaryPanel && (
@@ -1545,10 +1629,10 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
           </Suspense>
         </box>
       )}
-      <box height={5} borderStyle="rounded" borderColor="#29404d" flexDirection="column" paddingLeft={1} paddingRight={1}>
+      <box height={5} zIndex={10} borderStyle="rounded" borderColor="#29404d" flexDirection="column" paddingLeft={1} paddingRight={1}>
         <box flexDirection="row" justifyContent="space-between"><text fg="#d8b45d">{`${"━".repeat(filled)}${"─".repeat(progressWidth - filled)}  ${verseKey}`}</text><text fg="#60727a">{`${verseId}/${surah.totalVerses}`}</text></box>
         <text fg="#8fa4aa">{message}</text>
-        <text fg="#60727a">{`j/k verse · 1-4 mode · w study · h hadith · i image · p play · v follow · g spatial · r ayah/page · f script · M motion · q quit`}</text>
+        <text fg="#60727a">{`j/k verse · / search · 1-4 mode · w study · h hadith · i image · p play · v follow · g spatial · r ayah/page · f script · M motion · q quit`}</text>
       </box>
       <ChoiceDialog
         visible={dialog !== null}
@@ -1557,6 +1641,35 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
         choices={dialog?.choices ?? []}
         onDismiss={() => dialog?.onDismiss ? dialog.onDismiss() : setDialog(null)}
       />
+      {showSearch && (
+        <Suspense fallback={<text zIndex={100} fg="#d8b45d">Loading Quran search…</text>}>
+          <LazyFuzzySearchDialog
+            visible={true}
+            language="en"
+            onSelect={(nextSurahId, nextVerseId) => {
+              searchOpenRef.current = false;
+              setShowSearch(false);
+              setShowStudy(false);
+              setShowHadith(false);
+              setShowImage(false);
+              activePaneRef.current = "reader";
+              navigateTo(`${nextSurahId}:${nextVerseId}`);
+              setMessage(`Search selected ${nextSurahId}:${nextVerseId}`);
+            }}
+            onDismiss={() => { searchOpenRef.current = false; setShowSearch(false); }}
+          />
+        </Suspense>
+      )}
     </box>
+  );
+}
+
+export default function ImmersiveApp(props: { safeMode?: boolean }) {
+  return (
+    <ModeProvider>
+      <ThemeProvider>
+        <ImmersiveAppContent {...props} />
+      </ThemeProvider>
+    </ModeProvider>
   );
 }

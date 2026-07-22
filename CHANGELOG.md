@@ -6,16 +6,22 @@ All notable changes to quran.sh are documented here.
 
 ### Added
 
+- Added lazy Arabic, translation, and transliteration search to the unified reader through `/` and `Ctrl+F`, reusing the dashboard's bounded fuzzy-search surface and navigating directly to the selected ayah.
 - Added a consented, lazy Al Quran Cloud study fallback for ayat without an installed compatible QUL tafsir row, with attributed Tafsir al-Muyassar, bounded per-ayah requests and memory cache, RTL-safe rendering, retry/offline exits, per-resource provenance in hybrid panels, and a scrollable study overlay at standard terminal sizes.
 - Added `h` in immersive mode for verse-related hadith: attributed local `hadith` packs take priority, approved user-supplied Quran Foundation credentials enable a deferred bilingual in-reader panel with bounded pagination and RTL-safe Arabic, and the canonical Quran.com page remains the zero-setup fallback without scraping private endpoints.
 - Added a lazy OpenTUI Three Arabic reader with `r` ayah/page layouts and `f` Uthmani/IndoPak/Tajweed script selection: shaped RTL glyphs become vector geometry, ayah text is subtly extruded, page lines lift the active ayah, local QUL layouts take precedence, and the consented Al Quran Cloud fallback is honestly labelled as adaptive page flow.
 
 ### Changed
 
+- Made the adaptive next-generation reader the default no-argument TUI while retaining the original bookmarks, cues, reflections, themes, and reading-stats dashboard as `quran classic`; both experiences share the saved Quran position.
 - Moved opt-in ayah images to Al Quran Cloud's documented Islamic Network CDN, preferring its high-resolution source and falling back to its normal-resolution source under the same approved HTTPS origin; redirects and invalid PNG bodies are rejected.
 - Connected the lazy image viewer to immersive mode through `i` and to the no-QUL-layout/WebGPU recovery dialogs, with explicit network consent, retry, and a return to live terminal text at the same ayah.
-- Made immersive playback follow manual ayah navigation: changing ayat stops the previous stream before starting the selected one, and a single bounded in-memory preload is handed directly to OpenTUI Audio for the following ayah.
+- Made immersive playback follow manual ayah navigation and natural audio completion: changing ayat stops the previous stream immediately, aborts its stale preload, and waits 180 ms for rapid navigation to settle before requesting only the final ayah; reaching the end of an ayah advances without that delay, and a single bounded in-memory preload is handed directly to OpenTUI Audio for that transition.
 - Replaced the progress-only WebGPU backdrop with actual Quran text while keeping fonts, page data, `fontkit`, and Three.js deferred; disabling the surface clears vector geometry and the two-font memory cache. Tajweed colors come only from verified QCF `code_v2` glyph palettes and are never inferred from Unicode text.
+
+### Fixed
+
+- Moved the WebGPU Quran surface above the reader's clearing layer and bounded it between the header, translation, and controls, so the shaped Arabic is now a bright foreground reading surface instead of faint geometry hidden behind an empty box.
 
 ## [0.7.1] - 2026-07-21
 

@@ -41,13 +41,20 @@ export function FuzzySearchDialog(props: FuzzySearchDialogProps) {
       setSelectedIndex(0);
       return;
     }
+    if (!isIndexReady(language)) return;
     const hits = fuzzySearch(query, 50, language);
     setResults(hits);
     setSelectedIndex(0);
   }, [language]);
 
+  useEffect(() => {
+    if (indexReady) runSearch(input);
+  }, [indexReady, input, runSearch]);
+
   useKeyboard((key) => {
-    if (!props.visible || !indexReady) return;
+    if (!props.visible) return;
+    key.preventDefault();
+    key.stopPropagation();
     const str = key.sequence || key.name;
 
     if (key.name === "escape") {
@@ -79,20 +86,12 @@ export function FuzzySearchDialog(props: FuzzySearchDialogProps) {
     }
 
     if (key.name === "backspace") {
-      setInput((prev) => {
-        const next = prev.slice(0, -1);
-        runSearch(next);
-        return next;
-      });
+      setInput((prev) => prev.slice(0, -1));
       return;
     }
 
     if (str && str.length === 1 && !key.ctrl && !key.meta) {
-      setInput((prev) => {
-        const next = prev + str;
-        runSearch(next);
-        return next;
-      });
+      setInput((prev) => prev + str);
       return;
     }
   });

@@ -9,13 +9,14 @@ Usage:
   quran.sh [command] [options]
 
 Commands:
-  (none)           Launch interactive TUI reader
+  (none)           Launch the unified interactive reader
   read   <ref>     Read a surah or verse
   log    <ref>     Log a surah or verse as read
   search <query>   Search verse translations
   streak           Show reading stats and streaks
   resources [...]  Install or manage attributed optional content packs
   immersive        Launch the focused next-generation reader
+  classic          Launch the original dashboard reader
   stream           Read with completed ayat in terminal scrollback
   safe              Launch the classic text-only reader
   doctor            Inspect capabilities, packs, caches, and licenses (--gpu probes WebGPU)
@@ -64,7 +65,7 @@ async function main(): Promise<number | undefined> {
     return runResourceCommand(args.slice(1));
   }
 
-  if (command === "immersive" || command === "stream" || command === "safe") {
+  if (command === "immersive" || command === "classic" || command === "stream" || command === "safe") {
     const { launchTui } = await import("./tui/launch.ts");
     await launchTui({ experience: command === "safe" ? "classic" : command, safeMode: command === "safe" });
     return;

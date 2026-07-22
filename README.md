@@ -73,7 +73,7 @@ npm install -g quran.sh
 ### CLI Commands
 
 ```bash
-# Launch interactive TUI
+# Launch the unified reader (adaptive standard/immersive layout)
 quran
 
 # Read a surah (by number or name)
@@ -95,6 +95,9 @@ quran streak
 
 # Launch the focused next-generation reading experience
 quran immersive
+
+# Launch the original dashboard reader
+quran classic
 
 # Keep completed ayat in native terminal scrollback
 quran stream
@@ -118,7 +121,7 @@ quran models install official --yes
 
 ### TUI Keyboard Shortcuts
 
-The immersive reader uses `1`–`4` for Focus/Learn/Recite/Memorise, `w` for installed or consented fallback study data, `h` for explicitly related hadith, `i` for the consented online ayah-image view, `p` for follow-play recitation, `v` for local follow-my-recitation, and `g` for the vector OpenTUI Three Arabic reader. While the 3D reader is active, `r` switches ayah/page layout and `f` cycles Uthmani, IndoPak, and verified QCF Tajweed rendering. `M` controls reduced motion, and `j`/`k` move between ayat; follow-play stops the old stream, starts the selected ayah, and preloads only its immediate successor. Network, microphone, download, font, page-data, and GPU choices use keyboard-owned dialogs; `Esc` always cancels.
+The default unified reader uses `1`–`4` for Focus/Learn/Recite/Memorise, `/` or `Ctrl+F` for lazy Arabic/translation/transliteration search, `w` for installed or consented fallback study data, `h` for explicitly related hadith, `i` for the consented online ayah-image view, `p` for follow-play recitation, `v` for local follow-my-recitation, and `g` for the vector OpenTUI Three Arabic reader. While the 3D reader is active, `r` switches ayah/page layout and `f` cycles Uthmani, IndoPak, and verified QCF Tajweed rendering. `M` controls reduced motion, and `j`/`k` move between ayat; follow-play stops the old stream immediately, waits 180 ms for rapid manual navigation to settle before requesting the selected ayah, preloads only its immediate successor, and advances without that delay when an ayah finishes. Network, microphone, download, font, page-data, and GPU choices use keyboard-owned dialogs; `Esc` always cancels. The original bookmark/stats dashboard remains available as `quran classic`, where `/` opens exact search and `Ctrl+F` opens the same fuzzy search surface.
 
 #### Navigation
 

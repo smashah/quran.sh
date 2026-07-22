@@ -5,11 +5,11 @@ import type { VisualBackdrop } from "./types.ts";
 
 export const THREE_BACKDROP_LAYOUT = {
   position: "absolute" as const,
-  top: 0,
+  top: 3,
+  bottom: 8,
   left: 0,
   width: "100%" as const,
-  height: "100%" as const,
-  zIndex: -100,
+  zIndex: 2,
 } as const;
 
 export async function detectWebGpuCapability(
@@ -40,10 +40,10 @@ export async function createThreeBackdrop(context: RenderContext): Promise<Visua
   scene.background = new THREE.Color(0x05070b);
   scene.fog = new THREE.FogExp2(0x05070b, 0.075);
   const camera = new THREE.PerspectiveCamera(42, 2, 0.1, 100);
-  camera.position.set(0, 1.5, 11);
+  camera.position.set(0, 0.72, 10.5);
 
-  const ambient = new THREE.AmbientLight(0xcceeff, 0.9);
-  const key = new THREE.PointLight(0xf1cc72, 10, 30);
+  const ambient = new THREE.AmbientLight(0xe8f5f2, 1.35);
+  const key = new THREE.PointLight(0xf4d77f, 14, 30);
   key.position.set(0, 4, 4);
   scene.add(ambient, key);
 
@@ -96,7 +96,7 @@ export async function createThreeBackdrop(context: RenderContext): Promise<Visua
     setVerse(verseKey: VerseKey, progress: number) {
       const [surah = 1, ayah = 1] = verseKey.split(":").map(Number);
       root.rotation.y = reducedMotion ? 0 : ((surah + ayah) % 7 - 3) * 0.006;
-      key.intensity = 4 + Math.max(0, Math.min(1, progress)) * 4;
+      key.intensity = 14 + Math.max(0, Math.min(1, progress)) * 6;
       root.children.forEach((child: Object3D, index: number) => { child.visible = index < 5 || progress > (index - 5) / 18; });
       const hue = ((surah * 13) % 360) / 360;
       for (const arch of root.children.slice(0, 5)) {
