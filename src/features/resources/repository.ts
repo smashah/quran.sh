@@ -23,6 +23,7 @@ export interface ResourceRow {
     readonly sourceUrl: string;
     readonly license: string;
     readonly attribution: string;
+    readonly compatibility?: Readonly<Record<string, string>>;
   };
   readonly raw: Readonly<Record<string, unknown>>;
 }
@@ -31,6 +32,7 @@ export interface ResourceRepository {
   readonly kind: ResourcePackKind;
   verse(verseKey: string): readonly ResourceRow[];
   word(wordKey: string): readonly ResourceRow[];
+  page(page: number): readonly ResourceRow[];
   search(query: string, limit?: number): readonly ResourceRow[];
   close(): void;
 }
@@ -72,6 +74,7 @@ function normalizeRow(value: unknown, pack?: InstalledResourcePack): ResourceRow
       sourceUrl: pack.manifest.source?.url ?? "",
       license: pack.manifest.license?.name ?? "",
       attribution: pack.manifest.license?.attribution ?? "",
+      compatibility: pack.manifest.compatibility,
     } : undefined,
     raw,
   };
@@ -102,14 +105,17 @@ function createMemoryRepository(kind: ResourcePackKind, rows: readonly ResourceR
   let closed = false;
   const byVerse = new Map<string, ResourceRow[]>();
   const byWord = new Map<string, ResourceRow[]>();
+  const byPage = new Map<number, ResourceRow[]>();
   for (const row of rows) {
     if (row.verseKey) byVerse.set(row.verseKey, [...(byVerse.get(row.verseKey) ?? []), row]);
     if (row.wordKey) byWord.set(row.wordKey, [...(byWord.get(row.wordKey) ?? []), row]);
+    if (row.page) byPage.set(row.page, [...(byPage.get(row.page) ?? []), row]);
   }
   return {
     kind,
     verse: (key) => closed ? [] : byVerse.get(key) ?? [],
     word: (key) => closed ? [] : byWord.get(key) ?? [],
+    page: (page) => closed ? [] : byPage.get(page) ?? [],
     search(query, limit = 50) {
       const normalized = query.toLocaleLowerCase();
       if (!normalized) return [];
@@ -123,6 +129,7 @@ function createMemoryRepository(kind: ResourcePackKind, rows: readonly ResourceR
       activeRows = [];
       byVerse.clear();
       byWord.clear();
+      byPage.clear();
     },
   };
 }
@@ -151,11 +158,12 @@ export async function openResourceRepository(pack: InstalledResourcePack): Promi
   const pick = (...candidates: string[]) => candidates.find((candidate) => columns.includes(candidate));
   const verseColumn = pick("verse_key", "verseKey", "ayah_key", "ayahKey");
   const wordColumn = pick("location", "word_key", "wordKey");
+  const pageColumn = pick("page_number", "page");
   const searchableColumns = ["text", "translation", "tafsir", "content", "body", "word", "root", "lemma", "topic", "name"]
     .filter((column) => columns.includes(column));
   let closed = false;
   const quote = (identifier: string) => `"${identifier}"`;
-  const queryBy = (column: string | undefined, value: string, limit = 500): ResourceRow[] => {
+  const queryBy = (column: string | undefined, value: string | number, limit = 500): ResourceRow[] => {
     if (closed || !column) return [];
     const statement = database.query(`SELECT * FROM "${table}" WHERE ${quote(column)} = ? LIMIT ?`);
     try { return rowsFromJson(statement.all(value, Math.max(0, Math.min(500, limit))), pack); }
@@ -165,6 +173,7 @@ export async function openResourceRepository(pack: InstalledResourcePack): Promi
     kind: pack.manifest.kind,
     verse: (key) => queryBy(verseColumn, key),
     word: (key) => queryBy(wordColumn, key),
+    page: (page) => Number.isSafeInteger(page) && page > 0 ? queryBy(pageColumn, page, 1_000) : [],
     search(query, limit = 50) {
       if (closed || !query || searchableColumns.length === 0) return [];
       const maximum = Math.max(0, Math.min(200, limit));

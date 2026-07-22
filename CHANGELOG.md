@@ -8,11 +8,14 @@ All notable changes to quran.sh are documented here.
 
 - Added a consented, lazy Al Quran Cloud study fallback for ayat without an installed compatible QUL tafsir row, with attributed Tafsir al-Muyassar, bounded per-ayah requests and memory cache, RTL-safe rendering, retry/offline exits, per-resource provenance in hybrid panels, and a scrollable study overlay at standard terminal sizes.
 - Added `h` in immersive mode for verse-related hadith: attributed local `hadith` packs take priority, approved user-supplied Quran Foundation credentials enable a deferred bilingual in-reader panel with bounded pagination and RTL-safe Arabic, and the canonical Quran.com page remains the zero-setup fallback without scraping private endpoints.
+- Added a lazy OpenTUI Three Arabic reader with `r` ayah/page layouts and `f` Uthmani/IndoPak/Tajweed script selection: shaped RTL glyphs become vector geometry, ayah text is subtly extruded, page lines lift the active ayah, local QUL layouts take precedence, and the consented Al Quran Cloud fallback is honestly labelled as adaptive page flow.
 
 ### Changed
 
 - Moved opt-in ayah images to Al Quran Cloud's documented Islamic Network CDN, preferring its high-resolution source and falling back to its normal-resolution source under the same approved HTTPS origin; redirects and invalid PNG bodies are rejected.
 - Connected the lazy image viewer to immersive mode through `i` and to the no-QUL-layout/WebGPU recovery dialogs, with explicit network consent, retry, and a return to live terminal text at the same ayah.
+- Made immersive playback follow manual ayah navigation: changing ayat stops the previous stream before starting the selected one, and a single bounded in-memory preload is handed directly to OpenTUI Audio for the following ayah.
+- Replaced the progress-only WebGPU backdrop with actual Quran text while keeping fonts, page data, `fontkit`, and Three.js deferred; disabling the surface clears vector geometry and the two-font memory cache. Tajweed colors come only from verified QCF `code_v2` glyph palettes and are never inferred from Unicode text.
 
 ## [0.7.1] - 2026-07-21
 

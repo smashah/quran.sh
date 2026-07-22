@@ -49,6 +49,7 @@ export async function createThreeBackdrop(context: RenderContext): Promise<Visua
 
   const root = new THREE.Group();
   const lineGroup = new THREE.Group();
+  const readingGroup = new THREE.Group();
   const lineMeshes: Mesh[] = [];
   const archMaterial = new THREE.MeshStandardMaterial({ color: 0x4f7d80, emissive: 0x183c42, emissiveIntensity: 1.4, roughness: 0.6, metalness: 0.18 });
   for (let index = 0; index < 5; index++) {
@@ -75,7 +76,7 @@ export async function createThreeBackdrop(context: RenderContext): Promise<Visua
   }
   lineGroup.rotation.x = -0.12;
   lineGroup.visible = false;
-  scene.add(root, lineGroup);
+  scene.add(root, lineGroup, readingGroup);
   const renderable = new ThreeRenderable(context, {
     id: "quran-spatial-backdrop",
     scene,
@@ -85,6 +86,9 @@ export async function createThreeBackdrop(context: RenderContext): Promise<Visua
     live: false,
   });
   let reducedMotion = false;
+  let readingGeneration = 0;
+  let readingController: AbortController | null = null;
+  let clearReadingResources: (() => void) | null = null;
 
   return {
     kind: "opentui-three",
@@ -125,16 +129,53 @@ export async function createThreeBackdrop(context: RenderContext): Promise<Visua
       }
       renderable.requestRender();
     },
+    async setReadingSurface(surface) {
+      readingGeneration++;
+      const current = readingGeneration;
+      readingController?.abort(new Error("Replaced by a newer Quran reading surface"));
+      const controller = new AbortController();
+      readingController = controller;
+      const { buildArabicReadingGroup, disposeArabicReadingGroup, clearQuranFontCache } = await import("./arabic-text.ts");
+      clearReadingResources = clearQuranFontCache;
+      const next = await buildArabicReadingGroup(THREE, surface, controller.signal);
+      if (controller.signal.aborted || current !== readingGeneration) {
+        disposeArabicReadingGroup(next);
+        return;
+      }
+      const previous = readingGroup.children.slice();
+      readingGroup.clear();
+      readingGroup.add(next);
+      readingGroup.position.y = surface.layout === "ayah" ? 0.72 : 0.28;
+      for (const child of previous) disposeArabicReadingGroup(child);
+      lineGroup.visible = false;
+      root.position.z = -1.4;
+      root.children.forEach((child) => {
+        const mesh = child as Mesh;
+        const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+        for (const material of materials) {
+          if ("opacity" in material) {
+            material.transparent = true;
+            material.opacity = 0.34;
+          }
+        }
+      });
+      readingController = null;
+      renderable.requestRender();
+    },
     setVisible(visible) { renderable.visible = visible; },
     setReducedMotion(reduced) { reducedMotion = reduced; if (reduced) root.rotation.set(0, 0, 0); renderable.requestRender(); },
     dispose() {
-      scene.traverse((object: Object3D) => {
-        const mesh = object as Mesh;
-        mesh.geometry?.dispose();
-        const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
-        for (const material of materials) material.dispose();
-      });
+      readingGeneration++;
+      readingController?.abort(new Error("Spatial Quran reader disposed"));
+      readingController = null;
+      clearReadingResources?.();
+      clearReadingResources = null;
+      // Three's WebGPU renderer owns the GPU node/cache lifecycle. Disposing
+      // individual materials after renderer teardown triggers an upstream
+      // double-release in three.webgpu; engine.destroy() releases those GPU
+      // resources as one unit, then clearing the scene releases our JS graph.
       renderable.destroy();
+      scene.clear();
     },
   };
 }

@@ -33,6 +33,8 @@ export async function loadStudyService(dataDirectory: string, signal?: AbortSign
   };
   const rowsFor = async (kind: string, verseKey: string, wordKey?: string) => (await openKind(kind))
     .flatMap((entry) => wordKey ? entry.repository.word(wordKey) : entry.repository.verse(verseKey));
+  const rowsForPage = async (kind: string, page: number) => (await openKind(kind))
+    .flatMap((entry) => entry.repository.page(page));
   return {
     async inspect(verseKey, wordKey): Promise<StudySnapshot> {
       const translation = await rowsFor("translation", verseKey);
@@ -48,6 +50,9 @@ export async function loadStudyService(dataDirectory: string, signal?: AbortSign
       };
     },
     recitation: (verseKey) => rowsFor("recitation", verseKey),
+    script: (verseKey) => rowsFor("quran-script", verseKey),
+    scriptPage: (page) => rowsForPage("quran-script", page),
+    mushafPage: (page) => rowsForPage("mushaf-layout", page),
     hadith: (verseKey) => rowsFor("hadith", verseKey),
     async search(query, limit = 50) {
       const kinds = ["translation", "tafsir", "morphology", "topics", "similar-ayahs", "mutashabihat", "hadith"];

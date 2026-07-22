@@ -118,7 +118,7 @@ quran models install official --yes
 
 ### TUI Keyboard Shortcuts
 
-The immersive reader uses `1`–`4` for Focus/Learn/Recite/Memorise, `w` for installed or consented fallback study data, `h` for explicitly related hadith, `i` for the consented online ayah-image view, `p` for attributed recitation playback, `v` for local follow-my-recitation, `g` for the OpenTUI Three arch-and-star backdrop (with terminal-cell and online-image exits when no QUL Mushaf layout or WebGPU device is available), `M` for reduced motion, and `j`/`k` for verse navigation. Network, microphone, download, and GPU choices use keyboard-owned dialogs; `Esc` always cancels.
+The immersive reader uses `1`–`4` for Focus/Learn/Recite/Memorise, `w` for installed or consented fallback study data, `h` for explicitly related hadith, `i` for the consented online ayah-image view, `p` for follow-play recitation, `v` for local follow-my-recitation, and `g` for the vector OpenTUI Three Arabic reader. While the 3D reader is active, `r` switches ayah/page layout and `f` cycles Uthmani, IndoPak, and verified QCF Tajweed rendering. `M` controls reduced motion, and `j`/`k` move between ayat; follow-play stops the old stream, starts the selected ayah, and preloads only its immediate successor. Network, microphone, download, font, page-data, and GPU choices use keyboard-owned dialogs; `Esc` always cancels.
 
 #### Navigation
 

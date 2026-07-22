@@ -7,7 +7,8 @@ import { useFeatureCommand, useFeatureState } from "../features/react.tsx";
 import type { RecitationPlayer } from "../features/audio/player.ts";
 import type { TimedRecitationSession } from "../features/audio/timed-session.ts";
 import type { StudyService, StudySnapshot } from "../features/study/service.ts";
-import type { VisualBackdrop } from "../features/spatial/types.ts";
+import type { QuranReadingLayout, QuranReadingSurface, QuranScriptStyle, VisualBackdrop } from "../features/spatial/types.ts";
+import { coherentVerseRows, exactLocalPageLines, pageFlowLines, resourceText, wordPosition } from "../features/spatial/reading-surface.ts";
 import type { FollowCoordinator } from "../features/recognition/follow-coordinator.ts";
 import type { TilawaRecognizer } from "../features/recognition/types.ts";
 import { chooseReaderLayout, readerTransitionDuration } from "./responsive.ts";
@@ -25,6 +26,8 @@ import type { HadithPage, HadithRecord } from "../features/hadith/types.ts";
 const ONLINE_STUDY_PERMISSION_KEY = "onlineStudy.alquranCloudAccepted";
 const ONLINE_IMAGE_PERMISSION_KEY = "onlineImage.islamicNetworkCdnAccepted.v1";
 const ONLINE_HADITH_PERMISSION_KEY = "onlineHadith.quranFoundationAccepted.v1";
+const ONLINE_PAGE_PERMISSION_KEY = "onlinePage.alquranCloudAccepted.v1";
+const SPATIAL_TEXT_PERMISSION_KEY = "spatialText.quranComFontsAccepted.v1";
 type StudySource = "local" | "online" | "hybrid";
 
 const LazyImageReader = lazy(async () => {
@@ -62,6 +65,17 @@ function hasStudyContent(snapshot: StudySnapshot): boolean {
     || snapshot.topics.length > 0
     || snapshot.crossReferences.length > 0
     || snapshot.mushaf.length > 0;
+}
+
+function adjacentVerseKey(surahId: number, verseId: number, direction: 1 | -1): `${number}:${number}` | null {
+  const surah = getSurah(surahId);
+  if (!surah) return null;
+  const nextVerse = verseId + direction;
+  if (nextVerse >= 1 && nextVerse <= surah.totalVerses) return `${surahId}:${nextVerse}`;
+  const adjacentSurahId = surahId + direction;
+  const adjacentSurah = getSurah(adjacentSurahId);
+  if (!adjacentSurah) return null;
+  return `${adjacentSurahId}:${direction === 1 ? 1 : adjacentSurah.totalVerses}`;
 }
 
 function quranComHadithUrl(verseKey: string): string {
@@ -255,9 +269,12 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   const [imageRetry, setImageRetry] = useState(0);
   const [activeWordKey, setActiveWordKey] = useState<WordKey | null>(null);
   const [hasTimings, setHasTimings] = useState(false);
+  const [playMode, setPlayMode] = useState(false);
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const [terminalIllumination, setTerminalIllumination] = useState(false);
   const [gpuIllumination, setGpuIllumination] = useState(false);
+  const [readingLayout, setReadingLayout] = useState<QuranReadingLayout>("ayah");
+  const [scriptStyle, setScriptStyle] = useState<QuranScriptStyle>("uthmani");
   const [focusGlow, setFocusGlow] = useState(1);
   const focusTimeline = useTimeline({ duration: 180, loop: false, autoplay: false });
   useEffect(() => {
@@ -274,20 +291,32 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
   const spatialState = useFeatureState("spatial-backdrop", !safeMode);
   const studyRef = useRef<StudyService | null>(null);
   const playerRef = useRef<RecitationPlayer | null>(null);
+  const playModeRef = useRef(false);
+  const playbackRequestRef = useRef(0);
+  const preloadRequestRef = useRef(0);
   const backdropRef = useRef<(VisualBackdrop & { renderable: import("@opentui/core").Renderable }) | null>(null);
   const followRef = useRef<FollowCoordinator | null>(null);
   const timedRef = useRef<TimedRecitationSession | null>(null);
+  const playbackSubscriptionRef = useRef<(() => void) | null>(null);
   const packDownloadRef = useRef<AbortController | null>(null);
   const openStudyRef = useRef<AbortController | null>(null);
   const clearOpenStudyCacheRef = useRef<(() => void) | null>(null);
   const hadithRequestRef = useRef<AbortController | null>(null);
   const clearHadithCacheRef = useRef<(() => void) | null>(null);
+  const pageRequestRef = useRef<AbortController | null>(null);
+  const clearPageCacheRef = useRef<(() => void) | null>(null);
+  const spatialSurfaceRequestRef = useRef(0);
   const activePaneRef = useRef<"reader" | "study" | "hadith" | "image">("reader");
   const surah = getSurah(surahId)!;
   const verse = surah.verses[verseId - 1]!;
   const verseKey = `${surahId}:${verseId}` as const;
   const verseKeyRef = useRef<string>(verseKey);
   verseKeyRef.current = verseKey;
+
+  const setPlaybackFollowing = useCallback((enabled: boolean) => {
+    playModeRef.current = enabled;
+    setPlayMode(enabled);
+  }, []);
 
   const capabilities: CapabilityState = {
     text: true,
@@ -669,16 +698,48 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
     }
   }, [verseKey]);
 
+  const preloadFollowingAyah = useCallback(async (currentKey: string, player: RecitationPlayer, approvedPreferenceKey: string) => {
+    const [currentSurah, currentVerse] = currentKey.split(":").map(Number);
+    if (!currentSurah || !currentVerse) return;
+    const nextKey = adjacentVerseKey(currentSurah, currentVerse, 1);
+    const request = ++preloadRequestRef.current;
+    if (!nextKey) {
+      player.clearPreload?.();
+      return;
+    }
+    try {
+      const service = studyRef.current ?? await studyFeature.activate();
+      if (request !== preloadRequestRef.current || !playModeRef.current) return;
+      studyRef.current = service;
+      const rows = await service.recitation(nextKey);
+      const row = rows.find((candidate) => candidate.audioUrl);
+      const url = row?.audioUrl;
+      if (!url || request !== preloadRequestRef.current || !playModeRef.current) return;
+      const network = networkPlaybackIdentity(url, row);
+      if (network.preferenceKey !== approvedPreferenceKey || getPreference(network.preferenceKey) !== "true") return;
+      await player.preload?.(nextKey, url);
+    } catch {
+      // Preloading is opportunistic; normal playback retains its own bounded retry path.
+    }
+  }, [studyFeature]);
+
   const startPlayback = useCallback(async (
+    requestedKey: string,
     rows: Awaited<ReturnType<StudyService["recitation"]>>,
     url: string,
+    playbackRequest: number,
   ) => {
     let network;
     try { network = networkPlaybackIdentity(url, rows.find((row) => row.audioUrl === url)); }
-    catch (cause) { setMessage(deepestErrorMessage(cause, "Blocked invalid audio URL")); return; }
+    catch (cause) { throw new Error(deepestErrorMessage(cause, "Blocked invalid audio URL"), { cause }); }
     const begin = async () => {
+      const isCurrentRequest = () => playbackRequestRef.current === playbackRequest && verseKeyRef.current === requestedKey;
+      if (!isCurrentRequest()) return;
       await followRef.current?.stop();
+      if (!isCurrentRequest()) return;
+      followRef.current = null;
       const player = playerRef.current ?? await playerFeature.activate();
+      if (!isCurrentRequest()) return;
       playerRef.current = player;
       timedRef.current?.dispose();
       timedRef.current = null;
@@ -687,15 +748,52 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
         import("../features/audio/timed-session.ts"),
         import("../features/resources/timing.ts"),
       ]);
-      const timings = wordTimingsFromSegments(verseKey, rows.flatMap((row) => row.segments ?? []));
+      if (!isCurrentRequest()) return;
+      const timings = wordTimingsFromSegments(requestedKey, rows.flatMap((row) => row.segments ?? []));
       const timingsValid = Boolean(timings);
       setHasTimings(timingsValid);
-      const timed = createTimedRecitationSession(player, (key) => key === verseKey ? timings : null);
+      const timed = createTimedRecitationSession(player, (key) => key === requestedKey ? timings : null);
       timed.subscribe((state) => setActiveWordKey(state.wordKey));
       timedRef.current = timed;
-      await player.play(verseKey, url);
-      setMessage(timingsValid ? `Playing ${verseKey} with verified word timing · p stops` : `Playing ${verseKey} at ayah level · no verified word timing`);
+      playbackSubscriptionRef.current?.();
+      playbackSubscriptionRef.current = player.subscribe((state) => {
+        if (state.status !== "error" || state.verseKey !== requestedKey || verseKeyRef.current !== requestedKey) return;
+        playbackSubscriptionRef.current?.();
+        playbackSubscriptionRef.current = null;
+        preloadRequestRef.current++;
+        setPlaybackFollowing(false);
+        player.clearPreload?.();
+        timedRef.current?.dispose();
+        timedRef.current = null;
+        setActiveWordKey(null);
+        setHasTimings(false);
+        setMessage(`${state.message} · playback stopped at ${requestedKey}`);
+        setDialog({
+          title: "Audio stream unavailable",
+          description: [state.message, `Playback stopped at ${requestedKey}; no earlier stream remains active.`],
+          choices: [{
+            key: "r",
+            label: "Retry this ayah",
+            action: () => { setDialog(null); void begin(); },
+          }, {
+            key: "c",
+            label: "Continue reading",
+            action: () => { setDialog(null); setMessage("Playback remains off; reading position preserved"); },
+          }],
+        });
+      });
+      if (!isCurrentRequest()) {
+        timed.dispose();
+        if (timedRef.current === timed) timedRef.current = null;
+        return;
+      }
+      setPlaybackFollowing(true);
+      await player.play(requestedKey, url);
+      if (!isCurrentRequest() || !playModeRef.current) return;
+      setMessage(timingsValid ? `Following ${requestedKey} with verified word timing · next ayah preloading` : `Following ${requestedKey} at ayah level · next ayah preloading`);
+      void preloadFollowingAyah(requestedKey, player, network.preferenceKey);
     };
+    if (playbackRequestRef.current !== playbackRequest || verseKeyRef.current !== requestedKey) return;
     if (getPreference(network.preferenceKey) !== "true") {
       setDialog({
         title: "Allow network playback?",
@@ -718,7 +816,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       return;
     }
     await begin();
-  }, [playerFeature, verseKey]);
+  }, [playerFeature, preloadFollowingAyah, setPlaybackFollowing]);
 
   const installStarterPackAndPlay = useCallback(async () => {
     if (packDownloadRef.current) {
@@ -726,6 +824,8 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       return;
     }
     const controller = new AbortController();
+    const requestedKey = verseKey;
+    const playbackRequest = ++playbackRequestRef.current;
     packDownloadRef.current = controller;
     const cancel = () => {
       controller.abort(new Error("Cancelled by the reader"));
@@ -759,12 +859,13 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       const service = await studyFeature.activate();
       controller.signal.throwIfAborted();
       studyRef.current = service;
-      const rows = await service.recitation(verseKey);
+      const rows = await service.recitation(requestedKey);
+      if (playbackRequestRef.current !== playbackRequest || verseKeyRef.current !== requestedKey) return;
       const url = rows.find((row) => row.audioUrl)?.audioUrl;
       if (!url) throw new Error("The pack installed but this ayah has no audio mapping. Run `quran resources verify islamic-network.alafasy-128`.");
       setMessage("Recitation index installed and verified");
       setDialog(null);
-      await startPlayback(rows, url);
+      await startPlayback(requestedKey, rows, url, playbackRequest);
     } catch (cause) {
       const cancelled = controller.signal.aborted || (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "cancelled");
       if (cancelled) {
@@ -784,14 +885,32 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
     }
   }, [startPlayback, studyFeature, verseKey]);
 
-  const play = useCallback(async () => {
+  const playVerse = useCallback(async (requestedKey: string, offerPack: boolean) => {
     if (safeMode) { setMessage("Playback is off in safe mode"); return; }
+    const playbackRequest = ++playbackRequestRef.current;
     try {
       const service = studyRef.current ?? await studyFeature.activate();
+      if (playbackRequestRef.current !== playbackRequest || verseKeyRef.current !== requestedKey) return;
       studyRef.current = service;
-      const rows = await service.recitation(verseKey);
+      const rows = await service.recitation(requestedKey);
+      if (playbackRequestRef.current !== playbackRequest || verseKeyRef.current !== requestedKey) return;
       const url = rows.find((row) => row.audioUrl)?.audioUrl;
       if (!url) {
+        if (!offerPack) {
+          setPlaybackFollowing(false);
+          playerRef.current?.clearPreload?.();
+          playbackSubscriptionRef.current?.();
+          playbackSubscriptionRef.current = null;
+          setDialog({
+            title: "Playback paused",
+            description: [`The installed recitation source has no audio mapping for ${requestedKey}.`, "The reader stayed on the requested ayah and stopped every previous stream."],
+            choices: [
+              { key: "r", label: "Retry current ayah", action: () => { setDialog(null); void playVerse(requestedKey, false); } },
+              { key: "s", label: "Stop play mode", action: () => { setDialog(null); setMessage("Playback stopped; reading position preserved"); } },
+            ],
+          });
+          return;
+        }
         setDialog({
           title: "Download a recitation pack?",
           description: [
@@ -804,9 +923,52 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
         });
         return;
       }
-      await startPlayback(rows, url);
-    } catch (cause) { setMessage(cause instanceof Error ? cause.message : "Playback unavailable"); }
-  }, [installStarterPackAndPlay, safeMode, startPlayback, studyFeature, verseKey]);
+      await startPlayback(requestedKey, rows, url, playbackRequest);
+    } catch (cause) {
+      if (playbackRequestRef.current !== playbackRequest || verseKeyRef.current !== requestedKey) return;
+      setPlaybackFollowing(false);
+      playerRef.current?.clearPreload?.();
+      playbackSubscriptionRef.current?.();
+      playbackSubscriptionRef.current = null;
+      const detail = cause instanceof Error ? cause.message : "Playback unavailable";
+      setDialog({
+        title: "Playback paused",
+        description: [detail, "The current ayah remains selected and every earlier stream has been stopped."],
+        choices: [
+          { key: "r", label: "Retry current ayah", action: () => { setDialog(null); void playVerse(requestedKey, offerPack); } },
+          { key: "s", label: "Stop play mode", action: () => { setDialog(null); setMessage("Playback stopped; reading position preserved"); } },
+        ],
+      });
+    }
+  }, [installStarterPackAndPlay, safeMode, setPlaybackFollowing, startPlayback, studyFeature]);
+
+  const play = useCallback(() => playVerse(verseKey, true), [playVerse, verseKey]);
+
+  const stopPlayback = useCallback(() => {
+    playbackRequestRef.current++;
+    preloadRequestRef.current++;
+    setPlaybackFollowing(false);
+    playerRef.current?.stop();
+    playerRef.current?.clearPreload?.();
+    playbackSubscriptionRef.current?.();
+    playbackSubscriptionRef.current = null;
+    timedRef.current?.dispose();
+    timedRef.current = null;
+    setActiveWordKey(null);
+    setHasTimings(false);
+    setMessage("Playback stopped; reading position preserved");
+  }, [setPlaybackFollowing]);
+
+  useEffect(() => {
+    if (!playModeRef.current) return;
+    preloadRequestRef.current++;
+    playerRef.current?.stop();
+    timedRef.current?.dispose();
+    timedRef.current = null;
+    setActiveWordKey(null);
+    setMessage(`Moving playback to ${verseKey}…`);
+    void playVerse(verseKey, false);
+  }, [playVerse, verseKey]);
 
   const resolveLocalMushafRow = useCallback(async (): Promise<ResourceRow | null> => {
     const current = study?.verseKey === verseKey
@@ -822,6 +984,99 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       return null;
     }
   }, [study, studyFeature, verseKey]);
+
+  const buildReadingSurface = useCallback(async (
+    requestedKey: `${number}:${number}`,
+    targetLayout: QuranReadingLayout,
+    targetScript: QuranScriptStyle,
+    allowOnlinePage: boolean,
+  ): Promise<QuranReadingSurface> => {
+    const [requestedSurah, requestedAyah] = requestedKey.split(":").map(Number);
+    const builtin = getSurah(requestedSurah!)?.verses[requestedAyah! - 1];
+    if (!builtin) throw new Error(`Invalid Quran coordinate: ${requestedKey}`);
+    const service = studyRef.current ?? await studyFeature.activate();
+    studyRef.current = service;
+    const [snapshot, scriptRows] = await Promise.all([
+      service.inspect(requestedKey),
+      service.script?.(requestedKey) ?? Promise.resolve([]),
+    ]);
+    const localVerseRows = coherentVerseRows(scriptRows, requestedKey, targetScript);
+    const mushafRow = snapshot.mushaf.find((row) => row.page && row.line && row.provenance) ?? null;
+    const scriptPage = localVerseRows.length > 0 && localVerseRows.every((row) => row.page === localVerseRows[0]?.page)
+      ? localVerseRows[0]?.page
+      : undefined;
+    const page = scriptPage ?? mushafRow?.page;
+    const selectedAyahText = [...localVerseRows]
+      .sort((left, right) => wordPosition(left) - wordPosition(right))
+      .map((row) => resourceText(row, targetScript))
+      .filter((text): text is string => Boolean(text))
+      .join(" ");
+
+    if (targetLayout === "ayah") {
+      if (targetScript === "tajweed" && (!selectedAyahText || !page)) {
+        throw new Error("Verified Tajweed needs a local QCF V4 quran-script pack with code_v2 glyphs and page numbers");
+      }
+      return {
+        verseKey: requestedKey,
+        layout: "ayah",
+        script: targetScript,
+        page,
+        exactLineLayout: Boolean(selectedAyahText),
+        lines: [{
+          id: requestedKey,
+          text: selectedAyahText || builtin.text,
+          active: true,
+        }],
+      };
+    }
+
+    if (page && service.mushafPage && service.scriptPage) {
+      const [layoutRows, pageScriptRows] = await Promise.all([service.mushafPage(page), service.scriptPage(page)]);
+      const lines = exactLocalPageLines(pageScriptRows, layoutRows, page, requestedKey, targetScript);
+      if (lines) {
+        return { verseKey: requestedKey, layout: "page", script: targetScript, page, exactLineLayout: true, lines };
+      }
+    }
+
+    if (targetScript !== "uthmani") {
+      throw new Error(`${targetScript === "tajweed" ? "Tajweed" : "IndoPak"} page mode needs a compatible local QUL quran-script and mushaf-layout pack`);
+    }
+    if (!allowOnlinePage) throw new Error("ONLINE_PAGE_PERMISSION_REQUIRED");
+    pageRequestRef.current?.abort(new Error("Replaced by a newer Quran page request"));
+    const controller = new AbortController();
+    pageRequestRef.current = controller;
+    const provider = await import("../features/spatial/open-page-provider.ts");
+    clearPageCacheRef.current = provider.clearOpenQuranPageCache;
+    let openPage;
+    try { openPage = await provider.fetchOpenQuranPage(requestedKey, { signal: controller.signal }); }
+    finally { if (pageRequestRef.current === controller) pageRequestRef.current = null; }
+    return {
+      verseKey: requestedKey,
+      layout: "page",
+      script: "uthmani",
+      page: openPage.page,
+      exactLineLayout: false,
+      lines: pageFlowLines(openPage.verses, requestedKey),
+    };
+  }, [studyFeature]);
+
+  const applyReadingSurface = useCallback(async (
+    requestedKey: `${number}:${number}`,
+    targetLayout: QuranReadingLayout,
+    targetScript: QuranScriptStyle,
+    allowOnlinePage: boolean,
+  ): Promise<QuranReadingSurface> => {
+    const request = ++spatialSurfaceRequestRef.current;
+    const surface = await buildReadingSurface(requestedKey, targetLayout, targetScript, allowOnlinePage);
+    if (request !== spatialSurfaceRequestRef.current || verseKeyRef.current !== requestedKey || !backdropRef.current) return surface;
+    await backdropRef.current.setReadingSurface(surface);
+    if (request !== spatialSurfaceRequestRef.current || verseKeyRef.current !== requestedKey) return surface;
+    setReadingLayout(targetLayout);
+    setScriptStyle(targetScript);
+    const fidelity = surface.exactLineLayout ? "verified local layout" : targetLayout === "page" ? "canonical page · adaptive line flow" : "vector ayah";
+    setMessage(`${targetScript.toLocaleUpperCase()} ${targetLayout} reader · ${fidelity} · actual RTL glyph outlines`);
+    return surface;
+  }, [buildReadingSurface]);
 
   const handleImageError = useCallback((detail: string) => {
     setDialog({
@@ -901,7 +1156,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       backdropRef.current = backdrop;
       setTerminalIllumination(false);
       setGpuIllumination(true);
-      setMessage("3D arch and star illumination on · it responds to surah and ayah progress · g turns it off");
+      await applyReadingSurface(verseKey, readingLayout, scriptStyle, getPreference(ONLINE_PAGE_PERMISSION_KEY) === "true");
     } catch (cause) {
       let removalFailure: unknown;
       if (attached && activated) {
@@ -934,7 +1189,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
         ],
       });
     }
-  }, [reducedMotion, renderer, requestImage, spatialFeature, surah.totalVerses, verseId, verseKey]);
+  }, [applyReadingSurface, readingLayout, reducedMotion, renderer, requestImage, scriptStyle, spatialFeature, surah.totalVerses, verseId, verseKey]);
 
   const toggleSpatial = useCallback(async () => {
     if (safeMode) { setMessage("Spatial rendering is off in safe mode"); return; }
@@ -963,54 +1218,113 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       setMessage("The ayah changed while checking local Mushaf data · press g again for the current ayah");
       return;
     }
-    if (getPreference("spatialDisclosureAccepted") !== "true") {
+    if (getPreference(SPATIAL_TEXT_PERMISSION_KEY) !== "true") {
       setDialog({
-        title: "Enable spatial illumination?",
+        title: "Enable the 3D Arabic reader?",
         description: [
-          "This starts a local WebGPU device and a generated OpenTUI Three scene.",
-          "It downloads no assets and records no reading data. A terminal-only fallback is offered if WebGPU fails.",
+          "This starts a local WebGPU device and renders the Quran as shaped RTL vector outlines inside OpenTUI Three; the text is not a rasterized terminal screenshot.",
+          "The selected Quran WOFF2 font is fetched from quran.com, bounded to 512 KiB, kept only in a two-font memory cache, and discarded when quran.sh exits. quran.com receives your IP address; no reading history, notes, or telemetry are sent.",
+          "Uthmani and IndoPak use their real font faces. Tajweed is enabled only with verified QCF code_v2 data so its embedded rule colors remain authoritative.",
           localMushafRow
-            ? `The installed QUL-compatible layout will illuminate page ${localMushafRow.page}, line ${localMushafRow.line}.`
-            : "No local QUL Mushaf layout covers this ayah, so the 3D arch can follow ayah progress but cannot show verified page-line rails.",
+            ? `The installed QUL-compatible layout can reproduce page ${localMushafRow.page}, line ${localMushafRow.line}.`
+            : "Ayah mode works from the built-in Quran text. Page mode can later ask permission for the open Al Quran Cloud source; exact Mushaf lines remain local-pack only.",
         ],
         choices: [{
           key: "y",
-          label: "Enable 3D arch backdrop",
-          action: () => { setDialog(null); setPreference("spatialDisclosureAccepted", "true"); void enableSpatial(localMushafRow); },
-        }, ...!localMushafRow ? [{
-          key: "i",
-          label: "Use online ayah image",
-          detail: "Open a consented calligraphy view instead of the progress-only 3D arch.",
-          action: () => { setDialog(null); requestImage(); },
+          label: "Enable 3D Arabic reader",
+          action: () => { setDialog(null); setPreference(SPATIAL_TEXT_PERMISSION_KEY, "true"); void enableSpatial(localMushafRow); },
         }, {
           key: "f",
-          label: "Use terminal arch backdrop",
-          detail: "Always available, with no GPU or native dependency.",
-          action: () => { setDialog(null); setTerminalIllumination(true); setMessage("Terminal arch illumination on · it follows the active ayah · g turns it off"); },
-        }] : [{
-          key: "f",
-          label: "Use terminal arch backdrop",
-          detail: "Always available, with no GPU or native dependency.",
-          action: () => { setDialog(null); setTerminalIllumination(true); setMessage("Terminal arch illumination on · it follows the active ayah · g turns it off"); },
-        }]],
-      });
-      return;
-    }
-    if (!localMushafRow) {
-      setDialog({
-        title: "No local Mushaf layout for this ayah",
-        description: [
-          "The 3D arch can still respond visibly to surah and ayah progress, but verified page-line rails need a compatible local QUL layout.",
-          "You can continue with that progress view, use the terminal arch, or open the consented online calligraphy image.",
-        ],
-        choices: [{ key: "g", label: "Continue with 3D arch", action: () => { setDialog(null); void enableSpatial(null); } },
-          { key: "i", label: "Use online ayah image", action: () => { setDialog(null); requestImage(); } },
-          { key: "f", label: "Use terminal arch", action: () => { setDialog(null); setTerminalIllumination(true); setMessage("Terminal arch illumination on · it follows the active ayah · g turns it off"); } }],
+          label: "Keep terminal reader",
+          detail: "No GPU or font network request is needed.",
+          action: () => { setDialog(null); setMessage("Using the terminal Quran reader; press g whenever you want the 3D reader"); },
+        }],
       });
       return;
     }
     await enableSpatial(localMushafRow);
   }, [enableSpatial, gpuIllumination, renderer, requestImage, resolveLocalMushafRow, safeMode, spatialFeature, terminalIllumination]);
+
+  const toggleReadingLayout = useCallback(async () => {
+    if (!backdropRef.current) {
+      setMessage("Page and ayah surfaces are part of the 3D reader · press g to enable it first");
+      return;
+    }
+    const nextLayout: QuranReadingLayout = readingLayout === "ayah" ? "page" : "ayah";
+    const load = async (allowOnline: boolean) => {
+      try { await applyReadingSurface(verseKey, nextLayout, scriptStyle, allowOnline); }
+      catch (cause) {
+        const detail = deepestErrorMessage(cause, "The requested Quran surface is unavailable");
+        if (detail === "ONLINE_PAGE_PERMISSION_REQUIRED") {
+          setDialog({
+            title: "Load this Quran page?",
+            description: [
+              "No compatible local QUL Mushaf layout covers this ayah. The open Al Quran Cloud API can supply the canonical Uthmani ayat belonging to this page.",
+              `Only ayah ${verseKey} is requested to resolve its page, followed by that page's Quran text. Islamic Network receives your IP address; quran.sh sends no history, notes, or telemetry.`,
+              "The fallback flows the canonical ayat into the available terminal geometry; it does not claim the exact printed 15-line Mushaf layout. A local QUL mushaf-layout pack upgrades it automatically.",
+            ],
+            choices: [{
+              key: "y",
+              label: "Load canonical page",
+              detail: "Remember this provider choice on this device.",
+              action: () => { setPreference(ONLINE_PAGE_PERMISSION_KEY, "true"); setDialog(null); void load(true); },
+            }, {
+              key: "a",
+              label: "Stay in ayah mode",
+              action: () => { setDialog(null); setMessage("Stayed in the vector ayah reader; no page request was sent"); },
+            }],
+          });
+          return;
+        }
+        setDialog({
+          title: `${scriptStyle === "tajweed" ? "Tajweed" : "IndoPak"} page source unavailable`,
+          description: [detail, "quran.sh will not relabel Uthmani text or invent Tajweed colors. Import compatible quran-script and mushaf-layout packs with `quran resources import`, or continue immediately in Uthmani ayah mode."],
+          choices: [{
+            key: "u",
+            label: "Use Uthmani ayah",
+            action: () => { setDialog(null); void applyReadingSurface(verseKey, "ayah", "uthmani", false); },
+          }, {
+            key: "c",
+            label: "Keep current surface",
+            action: () => setDialog(null),
+          }],
+        });
+      }
+    };
+    await load(getPreference(ONLINE_PAGE_PERMISSION_KEY) === "true");
+  }, [applyReadingSurface, readingLayout, scriptStyle, verseKey]);
+
+  const cycleScriptStyle = useCallback(async () => {
+    if (!backdropRef.current) {
+      setMessage("Quran script faces are part of the 3D reader · press g to enable it first");
+      return;
+    }
+    const nextScript: QuranScriptStyle = scriptStyle === "uthmani" ? "indopak" : scriptStyle === "indopak" ? "tajweed" : "uthmani";
+    try {
+      await applyReadingSurface(verseKey, readingLayout, nextScript, getPreference(ONLINE_PAGE_PERMISSION_KEY) === "true");
+    } catch (cause) {
+      const detail = deepestErrorMessage(cause, `${nextScript} rendering is unavailable`);
+      setDialog({
+        title: `${nextScript === "tajweed" ? "Tajweed" : "IndoPak"} data is not installed`,
+        description: [
+          detail,
+          nextScript === "tajweed"
+            ? "Tajweed colors come from Quran.com's verified per-page QCF glyph palette. quran.sh needs matching local code_v2 words and page numbers, and will never guess colors from Unicode characters."
+            : "The IndoPak face can render the current ayah, but exact IndoPak page text and line placement need compatible local quran-script and mushaf-layout packs.",
+          "Import user-obtained QUL-compatible packs with `quran resources import manifest.json data.json`; the current Quran reader remains available now.",
+        ],
+        choices: [{
+          key: "u",
+          label: "Use Uthmani ayah",
+          action: () => { setDialog(null); void applyReadingSurface(verseKey, "ayah", "uthmani", false); },
+        }, {
+          key: "c",
+          label: "Keep current surface",
+          action: () => setDialog(null),
+        }],
+      });
+    }
+  }, [applyReadingSurface, readingLayout, scriptStyle, verseKey]);
 
   const toggleFollow = useCallback(async () => {
     if (followRef.current) {
@@ -1036,7 +1350,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       return;
     }
     try {
-      playerRef.current?.stop();
+      stopPlayback();
       const [recognizer, { createFfmpegCapture }, { createFollowCoordinator }] = await Promise.all([
         recognitionFeature.activate(),
         import("../features/capture/ffmpeg-source.ts"),
@@ -1055,7 +1369,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       followRef.current = follow;
       await follow.start();
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : "Follow mode unavailable"); }
-  }, [navigateTo, recognitionFeature, safeMode]);
+  }, [navigateTo, recognitionFeature, safeMode, stopPlayback]);
 
   useEffect(() => {
     backdropRef.current?.setVerse(verseKey, verseId / surah.totalVerses);
@@ -1081,6 +1395,20 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
 
   useEffect(() => {
     if (!backdropRef.current) return;
+    const allowOnline = getPreference(ONLINE_PAGE_PERMISSION_KEY) === "true";
+    void applyReadingSurface(verseKey, readingLayout, scriptStyle, allowOnline).catch((cause) => {
+      if (verseKeyRef.current !== verseKey || !backdropRef.current) return;
+      const detail = deepestErrorMessage(cause, "The spatial Quran surface could not follow this ayah");
+      void applyReadingSurface(verseKey, "ayah", "uthmani", false).then(() => {
+        setMessage(`${detail} · continued in Uthmani ayah mode`);
+      }).catch((fallbackCause) => setMessage(deepestErrorMessage(fallbackCause, "The 3D Quran text is temporarily unavailable")));
+    });
+  // Surface style changes are applied by their explicit dialog-aware commands;
+  // navigation is the only automatic transition this effect owns.
+  }, [verseKey]);
+
+  useEffect(() => {
+    if (!backdropRef.current) return;
     let active = true;
     void resolveLocalMushafRow().then((row) => {
       if (!active || !backdropRef.current) return;
@@ -1097,12 +1425,17 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
     packDownloadRef.current?.abort(new Error("Reader closed"));
     openStudyRef.current?.abort(new Error("Reader closed"));
     hadithRequestRef.current?.abort(new Error("Reader closed"));
+    pageRequestRef.current?.abort(new Error("Reader closed"));
     clearOpenStudyCacheRef.current?.();
     clearHadithCacheRef.current?.();
+    clearPageCacheRef.current?.();
     playerRef.current?.stop();
+    playerRef.current?.clearPreload?.();
+    playbackSubscriptionRef.current?.();
+    playbackSubscriptionRef.current = null;
     timedRef.current?.dispose();
     void followRef.current?.stop();
-    if (backdropRef.current) renderer.root.remove(backdropRef.current.renderable);
+    if (backdropRef.current?.renderable.parent) backdropRef.current.renderable.parent.remove(backdropRef.current.renderable);
   }, [renderer]);
 
   useKeyboard((key) => {
@@ -1112,8 +1445,10 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
     if (key.sequence === "w") { setShowHadith(false); void inspect(); return; }
     if (key.sequence === "h") { setShowStudy(false); void inspectHadith(); return; }
     if (key.sequence === "i") { toggleImage(); return; }
-    if (key.sequence === "p") { if (["playing", "buffering"].includes(playerRef.current?.getState().status ?? "")) { playerRef.current?.stop(); timedRef.current?.dispose(); timedRef.current = null; setActiveWordKey(null); setMessage("Playback stopped"); } else void play(); return; }
+    if (key.sequence === "p") { if (playModeRef.current) stopPlayback(); else void play(); return; }
     if (key.sequence === "g") { void toggleSpatial(); return; }
+    if (key.sequence === "r") { void toggleReadingLayout(); return; }
+    if (key.sequence === "f") { void cycleScriptStyle(); return; }
     if (key.sequence === "v") { void toggleFollow(); return; }
     if (key.sequence === "M") {
       const next = !reducedMotion;
@@ -1148,19 +1483,19 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
     <box width="100%" height="100%" flexDirection="column" zIndex={1}>
       <box height={3} flexDirection="row" borderStyle="rounded" borderColor="#355663" justifyContent="space-between" paddingLeft={1} paddingRight={1}>
         <text fg="#d8b45d">{`☾  ${surahId}. ${surah.transliteration} · ${surah.translation}`}</text>
-        <text fg="#7797a5">{`${modeLabels[mode]} · ${layout.mode}${gpuIllumination ? " · 3D ARCH" : terminalIllumination ? " · CELL ARCH" : ""}${safeMode ? " · SAFE" : ""}  ☽`}</text>
+        <text fg="#7797a5">{`${modeLabels[mode]} · ${layout.mode}${playMode ? " · FOLLOW PLAY" : ""}${gpuIllumination ? ` · 3D ${scriptStyle.toLocaleUpperCase()} ${readingLayout.toLocaleUpperCase()}` : terminalIllumination ? " · CELL ARCH" : ""}${safeMode ? " · SAFE" : ""}  ☽`}</text>
       </box>
       <box flexGrow={1} flexDirection="row">
         <box flexGrow={1} flexDirection="column" alignItems="center" justifyContent="center" paddingLeft={2} paddingRight={2}>
-          {layout.mode !== "compact" && previous && <text fg="#354249">{renderArabicVerse(previous.text, 0, lineWidth)}</text>}
+          {!gpuIllumination && layout.mode !== "compact" && previous && <text fg="#354249">{renderArabicVerse(previous.text, 0, lineWidth)}</text>}
           <box width="100%" minHeight={7} marginTop={1} marginBottom={1} padding={1} borderStyle="double" borderColor={terminalIllumination || gpuIllumination ? "#69a6a4" : focusGlow < 0.55 ? "#5b4c2d" : "#8b7441"} alignItems="center" justifyContent="center">
             {terminalIllumination && <TerminalIllumination verseKey={verseKey} />}
-            {activeRenderedIndex >= 0 ? (
+            {gpuIllumination ? <text> </text> : activeRenderedIndex >= 0 ? (
               <text fg="#f2ead8"><span>{arabic.slice(0, activeRenderedIndex)}</span><span fg="#05070b" bg="#d8b45d">{activeRenderedWord}</span><span>{arabic.slice(activeRenderedIndex + activeRenderedWord.length)}</span></text>
             ) : <text fg="#f2ead8">{arabic}</text>}
           </box>
           {presentation.showTranslation && <text fg="#aeb8b6">{verse.translation}</text>}
-          {!presentation.hideNextVerse && layout.mode === "immersive" && next && <text fg="#354249">{renderArabicVerse(next.text, 0, lineWidth)}</text>}
+          {!gpuIllumination && !presentation.hideNextVerse && layout.mode === "immersive" && next && <text fg="#354249">{renderArabicVerse(next.text, 0, lineWidth)}</text>}
         </box>
         {showStudy && layout.showAuxiliaryPanel && (
           <StudyPanel snapshot={study} source={studySource} verseKey={verseKey} width={40} />
@@ -1213,7 +1548,7 @@ export default function ImmersiveApp({ safeMode = false }: { safeMode?: boolean 
       <box height={5} borderStyle="rounded" borderColor="#29404d" flexDirection="column" paddingLeft={1} paddingRight={1}>
         <box flexDirection="row" justifyContent="space-between"><text fg="#d8b45d">{`${"━".repeat(filled)}${"─".repeat(progressWidth - filled)}  ${verseKey}`}</text><text fg="#60727a">{`${verseId}/${surah.totalVerses}`}</text></box>
         <text fg="#8fa4aa">{message}</text>
-        <text fg="#60727a">{`j/k verse · 1 Focus · 2 Learn · 3 Recite · 4 Memorise · w study · h hadith · i image · p play · v follow · g spatial · M motion · q quit`}</text>
+        <text fg="#60727a">{`j/k verse · 1-4 mode · w study · h hadith · i image · p play · v follow · g spatial · r ayah/page · f script · M motion · q quit`}</text>
       </box>
       <ChoiceDialog
         visible={dialog !== null}

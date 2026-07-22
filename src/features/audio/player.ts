@@ -14,11 +14,15 @@ export interface PlaybackHandle {
 
 export interface PlaybackBackend {
   play(url: string, signal: AbortSignal): Promise<PlaybackHandle>;
+  preload?(url: string, signal: AbortSignal): Promise<void>;
+  clearPreload?(): void;
   dispose(): void;
 }
 
 export interface RecitationPlayer {
   play(verseKey: string, url: string): Promise<void>;
+  preload?(verseKey: string, url: string): Promise<void>;
+  clearPreload?(): void;
   stop(): void;
   setVolume(volume: number): void;
   getState(): RecitationPlayerState;
@@ -32,6 +36,9 @@ export function createRecitationPlayer(backend: PlaybackBackend, pollMs = 100): 
   let controller: AbortController | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
   let generation = 0;
+  let preloadGeneration = 0;
+  let preloadController: AbortController | null = null;
+  let preloadedVerseKey: string | null = null;
   let volume = 1;
   const listeners = new Set<(state: RecitationPlayerState) => void>();
 
@@ -48,6 +55,13 @@ export function createRecitationPlayer(backend: PlaybackBackend, pollMs = 100): 
     if (timer) clearInterval(timer);
     timer = null;
     publish({ status: "idle" });
+  };
+  const clearPreload = () => {
+    preloadGeneration++;
+    preloadController?.abort();
+    preloadController = null;
+    preloadedVerseKey = null;
+    backend.clearPreload?.();
   };
 
   return {
@@ -83,6 +97,25 @@ export function createRecitationPlayer(backend: PlaybackBackend, pollMs = 100): 
         publish({ status: "error", verseKey, message: cause instanceof Error ? cause.message : "Playback failed" });
       }
     },
+    async preload(verseKey, url) {
+      if (!backend.preload || preloadedVerseKey === verseKey) return;
+      preloadGeneration++;
+      const current = preloadGeneration;
+      preloadController?.abort();
+      const localController = new AbortController();
+      preloadController = localController;
+      preloadedVerseKey = verseKey;
+      try {
+        await backend.preload(url, localController.signal);
+      } catch (cause) {
+        if (current !== preloadGeneration || localController.signal.aborted) return;
+        preloadedVerseKey = null;
+        throw cause;
+      } finally {
+        if (current === preloadGeneration) preloadController = null;
+      }
+    },
+    clearPreload,
     stop,
     setVolume(next) {
       volume = Math.max(0, Math.min(1, next));
@@ -95,6 +128,7 @@ export function createRecitationPlayer(backend: PlaybackBackend, pollMs = 100): 
     },
     dispose() {
       stop();
+      clearPreload();
       listeners.clear();
       backend.dispose();
     },
