@@ -4,6 +4,8 @@ All notable changes to quran.sh are documented here.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-07-22
+
 ### Changed
 
 - Rebuilt immersive study and related-hadith views as responsive task workspaces instead of fixed 40-column sidebars: the current ayah keeps a dedicated context card, commentary or narrations receive the remaining viewport, standard 88-column terminals use a readable split, and compact terminals stack the same content without exposing raw provider URLs.
@@ -126,7 +128,8 @@ All notable changes to quran.sh are documented here.
 - Stabilized database migrations and test database cleanup.
 
 [0.6.0]: https://github.com/smashah/quran.sh/compare/v0.5.0...v0.6.0
-[Unreleased]: https://github.com/smashah/quran.sh/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/smashah/quran.sh/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/smashah/quran.sh/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/smashah/quran.sh/compare/v0.7.1...v0.8.0
 [0.7.0]: https://github.com/smashah/quran.sh/compare/v0.6.0...v0.7.0
 [0.7.1]: https://github.com/smashah/quran.sh/compare/v0.7.0...v0.7.1
