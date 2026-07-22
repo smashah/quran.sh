@@ -4,7 +4,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { getSurah } from "../data/quran.ts";
 import { presentationFor, READING_MODES, type CapabilityState, type ReadingExperienceMode } from "../features/experience/mode.ts";
 import { useFeatureCommand, useFeatureState } from "../features/react.tsx";
-import type { RecitationPlayer } from "../features/audio/player.ts";
+import type { RecitationPlayer, RecitationPlayerState } from "../features/audio/player.ts";
 import type { TimedRecitationSession } from "../features/audio/timed-session.ts";
 import type { StudyService, StudySnapshot } from "../features/study/service.ts";
 import type { QuranReadingLayout, QuranReadingSurface, QuranScriptStyle, VisualBackdrop } from "../features/spatial/types.ts";
@@ -12,7 +12,7 @@ import { coherentVerseRows, exactLocalPageLines, pageFlowLines, resourceText, wo
 import type { FollowCoordinator } from "../features/recognition/follow-coordinator.ts";
 import type { TilawaRecognizer } from "../features/recognition/types.ts";
 import { chooseReaderLayout, readerTransitionDuration } from "./responsive.ts";
-import { alignRTL, getRtlStrategy, renderedArabicWordRange, RTL_STRATEGIES, renderArabicVerse, setRtlStrategy, wrapTerminalWords, type RtlStrategy } from "./utils/rtl.ts";
+import { getRtlStrategy, renderedArabicWordRange, RTL_STRATEGIES, renderArabicVerse, setRtlStrategy, wrapTerminalWords, type RtlStrategy } from "./utils/rtl.ts";
 import { getPreference, setPreference } from "../data/preferences.ts";
 import { parseWordKey, type WordKey } from "../domain/quran-coordinate.ts";
 import { APP_DATA_DIR } from "../data/db.ts";
@@ -50,6 +50,107 @@ interface OpenDialog {
   readonly description: readonly string[];
   readonly choices: readonly DialogChoice[];
   readonly onDismiss?: () => void;
+}
+
+interface PlaybackVisualState {
+  readonly status: "idle" | "loading" | "buffering" | "playing";
+  readonly elapsedMs: number;
+  readonly bufferedMs: number;
+  readonly durationMs: number | null;
+}
+
+const IDLE_PLAYBACK_VISUAL: PlaybackVisualState = {
+  status: "idle",
+  elapsedMs: 0,
+  bufferedMs: 0,
+  durationMs: null,
+};
+
+function playbackDuration(rows: readonly ResourceRow[]): number | null {
+  const duration = rows.flatMap((row) => row.segments ?? []).reduce((largest, segment) => Math.max(largest, segment[2]), 0);
+  return duration > 0 ? duration : null;
+}
+
+function playbackVisualFrom(state: RecitationPlayerState, durationMs: number | null): PlaybackVisualState {
+  if (state.status === "playing") return { status: "playing", elapsedMs: state.elapsedMs, bufferedMs: state.bufferedMs, durationMs };
+  if (state.status === "buffering") return { status: "buffering", elapsedMs: 0, bufferedMs: 0, durationMs };
+  return IDLE_PLAYBACK_VISUAL;
+}
+
+function formatClock(milliseconds: number): string {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
+}
+
+function fitTerminalLabel(value: string, width: number): string {
+  if (width <= 0) return "";
+  if (value.length <= width) return value;
+  return width === 1 ? "…" : `${value.slice(0, width - 1)}…`;
+}
+
+function centerTerminalLines(value: string, width: number): string {
+  return wrapTerminalWords(value, Math.max(1, width)).map((line) => {
+    const padding = Math.max(0, Math.floor((width - line.length) / 2));
+    return `${" ".repeat(padding)}${line}`;
+  }).join("\n");
+}
+
+function ArabicBlock({
+  value,
+  width,
+  fg = "#f2ead8",
+  bold = false,
+  marginBottom,
+}: {
+  readonly value: string;
+  readonly width: number;
+  readonly fg?: string;
+  readonly bold?: boolean;
+  readonly marginBottom?: number;
+}) {
+  const lines = renderArabicVerse(value, 0, Math.max(1, width)).split("\n");
+  return (
+    <box width="100%" height={Math.max(1, lines.length)} flexShrink={0} flexDirection="column" alignItems="flex-end" overflow="hidden" marginBottom={marginBottom}>
+      {lines.map((line, index) => (
+        <text key={`arabic-line-${index}`} fg={fg} attributes={bold ? TextAttributes.BOLD : undefined} wrapMode="none">{line}</text>
+      ))}
+    </box>
+  );
+}
+
+function PlaybackStatus({
+  value,
+  verseKey,
+  activeWord,
+  totalWords,
+  width,
+  timed,
+}: {
+  readonly value: PlaybackVisualState;
+  readonly verseKey: string;
+  readonly activeWord: number | null;
+  readonly totalWords: number;
+  readonly width: number;
+  readonly timed: boolean;
+}) {
+  const barWidth = Math.max(12, Math.min(48, width - 34));
+  const ratio = value.durationMs ? Math.min(1, value.elapsedMs / value.durationMs) : 0;
+  const filled = value.status === "buffering" || value.status === "loading"
+    ? Math.max(1, Math.floor(barWidth * 0.08))
+    : Math.round(barWidth * ratio);
+  const label = value.status === "playing"
+    ? timed && activeWord ? `FOLLOWING WORD ${activeWord}/${Math.max(activeWord, totalWords)}` : "FOLLOWING AYAH"
+    : value.status === "buffering" ? "BUFFERING RECITATION" : "PREPARING RECITATION";
+  const clock = value.durationMs ? `${formatClock(value.elapsedMs)} / ${formatClock(value.durationMs)}` : formatClock(value.elapsedMs);
+  return (
+    <box width={width} height={4} borderStyle="single" borderColor="#315a57" flexDirection="column" paddingLeft={1} paddingRight={1}>
+      <box width="100%" flexDirection="row" justifyContent="space-between">
+        <text fg="#62c2b8"><strong>{`▶ ${label} · ${verseKey}`}</strong></text>
+        <text fg="#78908d">{`${clock} · next ayah readying`}</text>
+      </box>
+      <text fg="#d8b45d">{`${"━".repeat(filled)}${"─".repeat(Math.max(0, barWidth - filled))}`}</text>
+    </box>
+  );
 }
 
 function deepestErrorMessage(cause: unknown, fallback: string): string {
@@ -94,10 +195,13 @@ function quranComHadithUrl(verseKey: string): string {
   return `https://quran.com/${slug}/${ayahNumber}/hadith`;
 }
 
-function ResourceAttribution({ row }: { readonly row: ResourceRow }) {
+function ResourceAttribution({ row, compact = false }: { readonly row: ResourceRow; readonly compact?: boolean }) {
   const provenance = row.provenance;
   if (!provenance) return <text fg="#52646b">Installed resource · attribution unavailable</text>;
   const termsUrl = typeof row.raw.termsUrl === "string" ? row.raw.termsUrl : undefined;
+  if (compact) {
+    return <text fg="#60727a" wrapMode="word">{`${provenance.attribution} · ${provenance.license}`}</text>;
+  }
   return (
     <box flexDirection="column" marginBottom={1}>
       <text fg="#60727a" wrapMode="char">{`${provenance.attribution} · ${provenance.license}`}</text>
@@ -111,6 +215,8 @@ function StudyPanel({
   snapshot,
   source,
   verseKey,
+  verseText,
+  verseTranslation,
   width,
   height,
   overlay = false,
@@ -118,6 +224,8 @@ function StudyPanel({
   readonly snapshot: StudySnapshot | null;
   readonly source: StudySource | null;
   readonly verseKey: string;
+  readonly verseText: string;
+  readonly verseTranslation: string;
   readonly width: number;
   readonly height?: number;
   readonly overlay?: boolean;
@@ -131,59 +239,68 @@ function StudyPanel({
   const tafsirRow = snapshot?.tafsir[0];
   const translationRow = snapshot?.translation[0];
   const tafsirBlocks = tafsirRow?.contentBlocks;
-  const contentWidth = Math.max(1, width - 5);
+  const wide = width >= 78 && (height ?? 24) >= 18;
+  const contextWidth = wide ? Math.max(30, Math.min(44, Math.floor((width - 5) * 0.38))) : Math.max(20, width - 4);
+  const contentWidth = wide ? Math.max(24, width - contextWidth - 8) : Math.max(20, width - 4);
   const displayText = (row: ResourceRow, value = row.text ?? ""): string => {
     if (!value) return "";
     const rtl = row.direction === "rtl" || row.language === "ar" || /[\u0600-\u06ff]/u.test(value);
     return rtl
-      ? renderArabicVerse(value, 0, contentWidth).split("\n").map((line) => alignRTL(line, contentWidth)).join("\n")
+      ? renderArabicVerse(value, 0, contentWidth)
       : wrapTerminalWords(value, contentWidth).join("\n");
   };
-  const displayBlock = (block: ResourceTextBlock): string => block.direction === "rtl"
-    ? renderArabicVerse(block.text, 0, contentWidth).split("\n").map((line) => alignRTL(line, contentWidth)).join("\n")
-    : wrapTerminalWords(block.text, contentWidth).join("\n");
+  const displayBlock = (block: ResourceTextBlock): string => wrapTerminalWords(block.text, contentWidth).join("\n");
   const sourceLabel = source === "hybrid" ? "LOCAL + ONLINE" : source === "online" ? "ONLINE" : "LOCAL";
+  const translation = translationRow?.text ? displayText(translationRow) : wrapTerminalWords(verseTranslation, Math.max(20, contextWidth - 4)).join("\n");
+  const contextTextWidth = Math.max(16, contextWidth - 4);
   const position = overlay
     ? { position: "absolute" as const, top: 3, left: 2, zIndex: 150, backgroundColor: "#081017" }
     : { zIndex: 150, backgroundColor: "#081017" };
   return (
     <box {...position} width={width} height={height} borderStyle="rounded" borderColor="#476672" flexDirection="column" padding={1}>
-      <text fg="#d8b45d">{`Study · ${verseKey} · ${sourceLabel} · [/] scroll · w closes`}</text>
-      <scrollbox ref={scrollRef} flexGrow={1} width="100%" scrollY={true} viewportCulling={true} scrollbarOptions={{ visible: true }}>
-        {translationRow?.text ? (
-          <box flexDirection="column">
-            <text fg="#aeb8b6">{`Translation\n${displayText(translationRow)}`}</text>
-            <ResourceAttribution row={translationRow} />
-          </box>
-        ) : <text fg="#60727a">No translation row available</text>}
-        {tafsirRow?.text ? (
-          <box flexDirection="column">
-            <text fg="#d8b45d">{typeof tafsirRow.raw.resourceName === "string" ? tafsirRow.raw.resourceName : "Tafsir"}</text>
-            {Array.isArray(tafsirRow.raw.coveredVerseKeys) && tafsirRow.raw.coveredVerseKeys.length > 1 && (
-              <text fg="#60727a">{`Commentary covers ${String(tafsirRow.raw.coveredVerseKeys[0])}–${String(tafsirRow.raw.coveredVerseKeys.at(-1))}`}</text>
+      <box height={1} width="100%" flexDirection="row" justifyContent="space-between">
+        <text fg="#f1d77c"><strong>{`Study · Tafsir · ${verseKey}`}</strong></text>
+        <text fg="#78908d">{`${sourceLabel} · [/] scroll · w closes`}</text>
+      </box>
+      <box flexGrow={1} width="100%" flexDirection={wide ? "row" : "column"} gap={1} marginTop={1}>
+        <box width={wide ? contextWidth : "100%"} height={wide ? "100%" : 8} borderStyle="single" borderColor="#5b4c2d" flexDirection="column" padding={1} justifyContent="center" overflow="hidden">
+          <text fg="#d8b45d">{`AYAH ${verseKey}`}</text>
+          <ArabicBlock value={verseText} width={Math.max(12, contextTextWidth - 4)} bold />
+          <text fg="#aeb8b6" wrapMode="word">{translation}</text>
+        </box>
+        <box flexGrow={1} height={wide ? "100%" : undefined} borderStyle="single" borderColor="#29404d" flexDirection="column" padding={1} overflow="hidden">
+          <text fg="#62c2b8">{tafsirRow && typeof tafsirRow.raw.resourceName === "string" ? tafsirRow.raw.resourceName : "COMMENTARY"}</text>
+          <scrollbox ref={scrollRef} flexGrow={1} width="100%" scrollY={true} viewportCulling={true} scrollbarOptions={{ visible: true }}>
+            {!snapshot && <text fg="#60727a">Loading attributed commentary…</text>}
+            {snapshot && !tafsirRow?.text && <text fg="#60727a">No commentary is available from the selected source for this ayah.</text>}
+            {tafsirRow?.text && (
+              <box flexDirection="column">
+                {Array.isArray(tafsirRow.raw.coveredVerseKeys) && tafsirRow.raw.coveredVerseKeys.length > 1 && (
+                  <text fg="#60727a">{`Commentary covers ${String(tafsirRow.raw.coveredVerseKeys[0])}–${String(tafsirRow.raw.coveredVerseKeys.at(-1))}`}</text>
+                )}
+                {tafsirBlocks
+                  ? tafsirBlocks.map((block, index) => block.direction === "rtl"
+                    ? <ArabicBlock key={`tafsir-block-${index}`} value={block.text} width={Math.max(16, Math.min(52, contentWidth - 8))} marginBottom={1} />
+                    : <text key={`tafsir-block-${index}`} fg="#b8c3be" marginBottom={1}>{displayBlock(block)}</text>)
+                  : tafsirRow.direction === "rtl" || tafsirRow.language === "ar"
+                    ? <ArabicBlock value={tafsirRow.text ?? ""} width={Math.max(16, Math.min(52, contentWidth - 8))} />
+                    : <text fg="#b8c3be">{displayText(tafsirRow)}</text>}
+                <ResourceAttribution row={tafsirRow} compact />
+              </box>
             )}
-            {tafsirBlocks
-              ? tafsirBlocks.map((block, index) => (
-                <text key={`tafsir-block-${index}`} fg={block.direction === "rtl" ? "#f2ead8" : "#8fa4aa"} marginBottom={1}>{displayBlock(block)}</text>
-              ))
-              : <text fg="#8fa4aa">{displayText(tafsirRow)}</text>}
-            <ResourceAttribution row={tafsirRow} />
-          </box>
-        ) : <text fg="#60727a">No tafsir row available</text>}
-        {(snapshot?.topics.length ?? 0) > 0 ? snapshot!.topics.map((row, index) => (
-          <box key={`${row.provenance?.packId ?? "topic"}-${index}`} flexDirection="column">
-            <text fg="#6f8b91">{`Topic\n${displayText(row, row.topic ?? row.text ?? "Untitled")}`}</text>
-            <ResourceAttribution row={row} />
-          </box>
-        )) : <text fg="#60727a">No topic row available</text>}
-        {(snapshot?.words.length ?? 0) > 0 ? snapshot!.words.slice(0, 5).map((row, index) => (
-          <box key={`${row.wordKey ?? "word"}-${row.provenance?.packId ?? index}`} flexDirection="column">
-            <text fg="#7797a5">{displayText(row, row.text ?? "word")}</text>
-            {row.root && <text fg="#6f8b91">{`Root\n${displayText(row, row.root)}`}</text>}
-            <ResourceAttribution row={row} />
-          </box>
-        )) : <text fg="#60727a">No morphology row available</text>}
-      </scrollbox>
+            {(snapshot?.topics.length ?? 0) > 0 && snapshot!.topics.map((row, index) => (
+              <box key={`${row.provenance?.packId ?? "topic"}-${index}`} flexDirection="column" marginTop={1}>
+                <text fg="#6f8b91">{`TOPIC · ${displayText(row, row.topic ?? row.text ?? "Untitled")}`}</text>
+              </box>
+            ))}
+            {(snapshot?.words.length ?? 0) > 0 && snapshot!.words.slice(0, 5).map((row, index) => (
+              <box key={`${row.wordKey ?? "word"}-${row.provenance?.packId ?? index}`} flexDirection="column" marginTop={1}>
+                <text fg="#7797a5">{`WORD · ${displayText(row, row.text ?? "word")}${row.root ? ` · ROOT ${displayText(row, row.root)}` : ""}`}</text>
+              </box>
+            ))}
+          </scrollbox>
+        </box>
+      </box>
     </box>
   );
 }
@@ -191,6 +308,8 @@ function StudyPanel({
 function HadithPanel({
   value,
   verseKey,
+  verseText,
+  verseTranslation,
   width,
   height,
   overlay = false,
@@ -199,6 +318,8 @@ function HadithPanel({
 }: {
   readonly value: HadithPage | null;
   readonly verseKey: string;
+  readonly verseText: string;
+  readonly verseTranslation: string;
   readonly width: number;
   readonly height?: number;
   readonly overlay?: boolean;
@@ -216,23 +337,27 @@ function HadithPanel({
       onLoadMore();
     }
   });
-  const contentWidth = Math.max(1, width - 5);
-  const displayLines = (value: string, direction?: "rtl" | "ltr"): string[] => direction === "rtl" || /[\u0600-\u06ff]/u.test(value)
-    ? renderArabicVerse(value, 0, contentWidth).split("\n").map((line) => alignRTL(line, contentWidth))
-    : wrapTerminalWords(value, contentWidth);
+  const wide = width >= 78 && (height ?? 24) >= 18;
+  const contextWidth = wide ? Math.max(28, Math.min(36, Math.floor((width - 5) * 0.3))) : Math.max(20, width - 4);
+  const contentWidth = wide ? Math.max(28, width - contextWidth - 8) : Math.max(20, width - 4);
+  const displayLines = (value: string): string[] => wrapTerminalWords(value, contentWidth);
+  const isArabic = (value: string, direction?: "rtl" | "ltr"): boolean => direction === "rtl" || /[\u0600-\u06ff]/u.test(value);
   const sourceLabel = value?.source === "quran-foundation" ? "ONLINE · QURAN FOUNDATION" : "LOCAL PACK";
+  const contextTextWidth = Math.max(16, contextWidth - 4);
   const position = overlay
     ? { position: "absolute" as const, top: 3, left: 2, zIndex: 155, backgroundColor: "#081017" }
     : { zIndex: 155, backgroundColor: "#081017" };
   const renderRecord = (record: HadithRecord) => (
     <box key={record.id} flexDirection="column" marginBottom={1}>
-      {displayLines(record.name).map((line, index) => <text key={`${record.id}-name-${index}`} fg="#d8b45d">{line}</text>)}
-      <text fg="#d8b45d">Hadith</text>
-      {displayLines(record.hadithNumber).map((line, index) => <text key={`${record.id}-number-${index}`} fg="#d8b45d">{line}</text>)}
+      <text fg="#62c2b8"><strong>{`${record.name} · Hadith ${record.hadithNumber}`}</strong></text>
       {record.texts.map((text, index) => (
         <box key={`${record.id}-${text.language}-${text.urn ?? index}`} flexDirection="column" marginTop={1}>
-          {text.chapterTitle && displayLines(text.chapterTitle).map((line, lineIndex) => <text key={`${record.id}-${text.language}-chapter-${lineIndex}`} fg="#6f8b91">{line}</text>)}
-          {displayLines(text.body, text.direction).map((line, lineIndex) => <text key={`${record.id}-${text.language}-body-${lineIndex}`} fg={text.language === "ar" ? "#f2ead8" : "#aeb8b6"}>{line}</text>)}
+          {text.chapterTitle && (isArabic(text.chapterTitle)
+            ? <ArabicBlock value={text.chapterTitle} width={Math.max(16, Math.min(52, contentWidth - 8))} fg="#8fa6a3" />
+            : displayLines(text.chapterTitle).map((line, lineIndex) => <text key={`${record.id}-${text.language}-chapter-${lineIndex}`} fg="#6f8b91">{line}</text>))}
+          {isArabic(text.body, text.direction)
+            ? <ArabicBlock value={text.body} width={Math.max(16, Math.min(52, contentWidth - 8))} />
+            : displayLines(text.body).map((line, lineIndex) => <text key={`${record.id}-${text.language}-body-${lineIndex}`} fg="#aeb8b6">{line}</text>)}
           {text.grades.length > 0 && <text fg="#7797a5">Grade</text>}
           {text.grades.map((grade, gradeIndex) => (
             <box key={`${record.id}-${text.language}-grade-${gradeIndex}`} flexDirection="column">
@@ -243,23 +368,34 @@ function HadithPanel({
         </box>
       ))}
       {displayLines(record.provenance.attribution).map((line, index) => <text key={`${record.id}-attribution-${index}`} fg="#60727a">{line}</text>)}
-      <text fg="#52646b">Terms</text>
       {displayLines(record.provenance.license).map((line, index) => <text key={`${record.id}-license-${index}`} fg="#52646b">{line}</text>)}
-      {record.provenance.sourceUrl && <text fg="#52646b" wrapMode="char">{`Source: ${record.provenance.sourceUrl}`}</text>}
-      {record.provenance.termsUrl && <text fg="#52646b" wrapMode="char">{`Policy: ${record.provenance.termsUrl}`}</text>}
     </box>
   );
   return (
     <box {...position} width={width} height={height} borderStyle="rounded" borderColor="#476672" flexDirection="column" padding={1}>
-      <text fg="#d8b45d">{`Hadith · ${verseKey} · ${sourceLabel} · [/] scroll · h closes`}</text>
-      <scrollbox ref={scrollRef} flexGrow={1} width="100%" scrollY={true} viewportCulling={true} scrollbarOptions={{ visible: true }}>
-        <text fg="#7797a5" wrapMode="char">Only narrations that explicitly reference this ayah are included. Quran.com curates this non-exhaustive selection from Sahih al-Bukhari and Sahih Muslim via Sunnah.com.</text>
-        {(value?.records.length ?? 0) > 0
-          ? value!.records.map(renderRecord)
-          : <text fg="#60727a">No curated related hadith are currently available for this ayah.</text>}
-        {value?.truncated && <text fg="#7797a5">Only twelve records remain visible at once to keep terminal memory bounded.</text>}
-        {value?.hasMore && <text fg="#d8b45d">{loadingMore ? "Loading the next bounded page…" : "Press n to load the next 4 narrations"}</text>}
-      </scrollbox>
+      <box height={1} width="100%" flexDirection="row" justifyContent="space-between">
+        <text fg="#f1d77c"><strong>{`Related hadith · ${verseKey}`}</strong></text>
+        <text fg="#78908d">{`${sourceLabel} · [/] scroll · h closes`}</text>
+      </box>
+      <box flexGrow={1} width="100%" flexDirection={wide ? "row" : "column"} gap={1} marginTop={1}>
+        <box width={wide ? contextWidth : "100%"} height={wide ? "100%" : 9} borderStyle="single" borderColor="#29404d" flexDirection="column" padding={1} overflow="hidden">
+          <text fg="#d8b45d">{`AYAH ${verseKey}`}</text>
+          <ArabicBlock value={verseText} width={Math.max(12, contextTextWidth - 4)} bold />
+          <text fg="#aeb8b6" wrapMode="word">{wrapTerminalWords(verseTranslation, Math.max(20, contextWidth - 4)).join("\n")}</text>
+          <text fg="#7797a5" wrapMode="word">Only narrations explicitly linked to this ayah are shown. This is a curated, non-exhaustive study aid.</text>
+        </box>
+        <box flexGrow={1} height={wide ? "100%" : undefined} borderStyle="single" borderColor="#29404d" flexDirection="column" padding={1} overflow="hidden">
+          <text fg="#62c2b8">NARRATIONS · ARABIC + ENGLISH</text>
+          <scrollbox ref={scrollRef} flexGrow={1} width="100%" scrollY={true} viewportCulling={true} scrollbarOptions={{ visible: true }}>
+            {!value && <text fg="#60727a">Loading explicitly related narrations…</text>}
+            {(value?.records.length ?? 0) > 0
+              ? value!.records.map(renderRecord)
+              : value && <text fg="#60727a">No curated related hadith are currently available for this ayah.</text>}
+            {value?.truncated && <text fg="#7797a5">Only twelve records remain visible at once to keep terminal memory bounded.</text>}
+            {value?.hasMore && <text fg="#d8b45d">{loadingMore ? "Loading the next bounded page…" : "Press n to load the next 4 narrations"}</text>}
+          </scrollbox>
+        </box>
+      </box>
     </box>
   );
 }
@@ -291,6 +427,7 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
   const [activeWordKey, setActiveWordKey] = useState<WordKey | null>(null);
   const [hasTimings, setHasTimings] = useState(false);
   const [playMode, setPlayMode] = useState(false);
+  const [playbackVisual, setPlaybackVisual] = useState<PlaybackVisualState>(IDLE_PLAYBACK_VISUAL);
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const [onlineSourcesAccepted, setOnlineSourcesAccepted] = useState(
     () => safeMode || sharedOnlineSourcesAccepted(),
@@ -820,7 +957,9 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
       if (!isCurrentRequest()) return;
       const timings = wordTimingsFromSegments(requestedKey, rows.flatMap((row) => row.segments ?? []));
       const timingsValid = Boolean(timings);
+      const durationMs = playbackDuration(rows);
       setHasTimings(timingsValid);
+      setPlaybackVisual({ status: "loading", elapsedMs: 0, bufferedMs: 0, durationMs });
       const timed = createTimedRecitationSession(player, (key) => key === requestedKey ? timings : null);
       timed.subscribe((state) => setActiveWordKey(state.wordKey));
       timedRef.current = timed;
@@ -828,6 +967,9 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
       let unsubscribePlayback = () => {};
       unsubscribePlayback = player.subscribe((state) => {
         if (!("verseKey" in state) || state.verseKey !== requestedKey || !isCurrentRequest()) return;
+        if (state.status === "playing" || state.status === "buffering") {
+          setPlaybackVisual(playbackVisualFrom(state, durationMs));
+        }
         if (state.status === "ended" && playModeRef.current) {
           unsubscribePlayback();
           if (playbackSubscriptionRef.current === unsubscribePlayback) playbackSubscriptionRef.current = null;
@@ -835,6 +977,7 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
           timedRef.current = null;
           setActiveWordKey(null);
           setHasTimings(false);
+          setPlaybackVisual(IDLE_PLAYBACK_VISUAL);
           const [currentSurah, currentVerse] = requestedKey.split(":").map(Number);
           const nextKey = currentSurah && currentVerse ? adjacentVerseKey(currentSurah, currentVerse, 1) : null;
           if (nextKey) {
@@ -858,6 +1001,7 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
         timedRef.current = null;
         setActiveWordKey(null);
         setHasTimings(false);
+        setPlaybackVisual(IDLE_PLAYBACK_VISUAL);
         setMessage(`${state.message} · playback stopped at ${requestedKey}`);
         setDialog({
           title: "Audio stream unavailable",
@@ -877,6 +1021,7 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
       if (!isCurrentRequest()) {
         timed.dispose();
         if (timedRef.current === timed) timedRef.current = null;
+        setPlaybackVisual(IDLE_PLAYBACK_VISUAL);
         return;
       }
       setPlaybackFollowing(true);
@@ -1073,6 +1218,7 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
     timedRef.current = null;
     setActiveWordKey(null);
     setHasTimings(false);
+    setPlaybackVisual(IDLE_PLAYBACK_VISUAL);
     setMessage("Playback stopped; reading position preserved");
   }, [setPlaybackFollowing]);
 
@@ -1091,6 +1237,7 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
     timedRef.current = null;
     setActiveWordKey(null);
     setHasTimings(false);
+    setPlaybackVisual(IDLE_PLAYBACK_VISUAL);
     setMessage(intent === "completion" ? `Continuing with ${verseKey}…` : `Moving playback to ${verseKey}…`);
     if (intent === "completion") {
       void playVerse(verseKey, false);
@@ -1531,71 +1678,87 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
     }
   });
 
-  const showSidePanel = (showStudy || showHadith) && layout.showAuxiliaryPanel;
-  const lineWidth = Math.max(28, Math.min(96, dimensions.width - (showSidePanel ? 42 : 8)));
+  const readerWidth = Math.max(32, Math.min(100, Math.floor(dimensions.width * (layout.mode === "compact" ? 0.96 : 0.86))));
+  const lineWidth = Math.max(28, readerWidth - 4);
   const arabic = useMemo(() => renderArabicVerse(verse.text, 0, lineWidth), [lineWidth, verse.text]);
   const activeCoordinate = activeWordKey ? parseWordKey(activeWordKey) : null;
   const activeWordNumber = activeCoordinate?.key.startsWith(`${verseKey}:`) ? activeCoordinate.word : null;
   const activeRenderedRange = activeWordNumber
     ? renderedArabicWordRange(verse.text, arabic, activeWordNumber, lineWidth, getRtlStrategy() ?? undefined)
     : null;
-  const previous = verseId > 1 ? surah.verses[verseId - 2] : null;
-  const next = verseId < surah.totalVerses ? surah.verses[verseId] : null;
   const progressWidth = Math.max(8, Math.min(32, Math.floor(dimensions.width / 4)));
   const filled = Math.round(verseId / surah.totalVerses * progressWidth);
   const arabicReadingHeight = gpuIllumination
     ? 7
-    : Math.min(16, Math.max(7, Math.floor((dimensions.height - 8) * (layout.mode === "immersive" ? 0.58 : 0.48))));
+    : Math.min(13, Math.max(7, arabic.split("\n").length + (playMode ? 5 : 6)));
+  const activePaneLabel = showStudy ? "STUDY" : showHadith ? "RELATED HADITH" : playMode ? "FOLLOW PLAY" : "READ";
+  const totalWords = verse.text.trim().split(/\s+/u).filter(Boolean).length;
+  const footerMessageWidth = Math.max(16, dimensions.width - progressWidth - 18);
+  const footerMessage = fitTerminalLabel(message, footerMessageWidth);
+  const shortcuts = dimensions.width >= 100
+    ? "j/k verse · / search · 1–4 mode · w study · W tafsir · h hadith · p play · v follow · ? help · q quit"
+    : "j/k verse · / search · w study · h hadith · p play · q quit";
 
   return (
     <box width="100%" height="100%" flexDirection="column" zIndex={1}>
       <box height={3} zIndex={10} flexDirection="row" borderStyle="rounded" borderColor="#355663" justifyContent="space-between" paddingLeft={1} paddingRight={1}>
         <text fg="#d8b45d">{`☾  ${surahId}. ${surah.transliteration} · ${surah.translation}`}</text>
-        <text fg="#7797a5">{`${modeLabels[mode]} · ${layout.mode}${playMode ? " · FOLLOW PLAY" : ""}${gpuIllumination ? ` · 3D ${scriptStyle.toLocaleUpperCase()} ${readingLayout.toLocaleUpperCase()}` : terminalIllumination ? " · CELL ARCH" : ""}${safeMode ? " · SAFE" : ""}  ☽`}</text>
+        <text fg="#7797a5">{`${modeLabels[mode]} · ${layout.mode} · ${activePaneLabel}${gpuIllumination ? ` · 3D ${scriptStyle.toLocaleUpperCase()} ${readingLayout.toLocaleUpperCase()}` : terminalIllumination ? " · CELL ARCH" : ""}${safeMode ? " · SAFE" : ""}  ☽`}</text>
       </box>
       <box flexGrow={1} flexDirection="row">
         <box flexGrow={1} flexDirection="column" alignItems="center" justifyContent="center" paddingLeft={2} paddingRight={2}>
-          {!gpuIllumination && layout.mode !== "compact" && previous && <text fg="#354249">{renderArabicVerse(previous.text, 0, lineWidth)}</text>}
-          <box width="100%" minHeight={arabicReadingHeight} flexGrow={gpuIllumination ? 1 : undefined} zIndex={gpuIllumination ? 3 : undefined} marginTop={1} marginBottom={1} padding={1} borderStyle="double" borderColor={terminalIllumination || gpuIllumination ? "#8cd4cf" : focusGlow < 0.55 ? "#5b4c2d" : "#8b7441"} alignItems="center" justifyContent="center">
+          <box width={readerWidth} minHeight={arabicReadingHeight} flexGrow={gpuIllumination ? 1 : undefined} zIndex={gpuIllumination ? 3 : undefined} marginTop={1} marginBottom={1} padding={1} borderStyle="double" borderColor={terminalIllumination || gpuIllumination ? "#8cd4cf" : focusGlow < 0.55 ? "#5b4c2d" : "#8b7441"} title={` ${verseKey} `} titleAlignment="center" alignItems="center" justifyContent="center">
             {terminalIllumination && <TerminalIllumination verseKey={verseKey} />}
             {gpuIllumination ? null : activeRenderedRange ? (
-              <text fg="#f2ead8" attributes={TextAttributes.BOLD}><span>{arabic.slice(0, activeRenderedRange.start)}</span><span fg="#05070b" bg="#d8b45d">{arabic.slice(activeRenderedRange.start, activeRenderedRange.end)}</span><span>{arabic.slice(activeRenderedRange.end)}</span></text>
-            ) : <text fg="#f2ead8" attributes={TextAttributes.BOLD}>{arabic}</text>}
+              <text fg={playMode ? "#6f7b76" : "#f2ead8"} attributes={TextAttributes.BOLD} wrapMode="none"><span>{arabic.slice(0, activeRenderedRange.start)}</span><span fg="#05070b" bg="#f1d77c">{arabic.slice(activeRenderedRange.start, activeRenderedRange.end)}</span><span>{arabic.slice(activeRenderedRange.end)}</span></text>
+            ) : <text fg="#f2ead8" attributes={TextAttributes.BOLD} wrapMode="none">{arabic}</text>}
           </box>
           {presentation.showTranslation && (gpuIllumination ? (
-            <box height={3} zIndex={10} alignItems="center" justifyContent="center" paddingLeft={2} paddingRight={2}>
-              <text fg="#d5ddda">{verse.translation}</text>
+            <box width={readerWidth} minHeight={3} zIndex={10} alignItems="center" justifyContent="center" paddingLeft={2} paddingRight={2}>
+              <text fg="#d5ddda">{centerTerminalLines(verse.translation, Math.max(20, readerWidth - 4))}</text>
             </box>
           ) : (
-            <box width="100%" minHeight={3} alignItems="center" justifyContent="center" paddingLeft={4} paddingRight={4}>
-              <text fg="#aebdba">{verse.translation}</text>
+            <box width={readerWidth} minHeight={3} alignItems="center" justifyContent="center" paddingLeft={2} paddingRight={2}>
+              <text fg="#aebdba">{centerTerminalLines(verse.translation, Math.max(20, readerWidth - 4))}</text>
             </box>
           ))}
-          {!gpuIllumination && !presentation.hideNextVerse && layout.mode === "immersive" && next && <text fg="#354249">{renderArabicVerse(next.text, 0, lineWidth)}</text>}
+          {mode === "learn" && verse.transliteration && (
+            <box width={readerWidth} minHeight={2} alignItems="center" justifyContent="center" paddingLeft={2} paddingRight={2}>
+              <text fg="#60727a">{centerTerminalLines(verse.transliteration, Math.max(20, readerWidth - 4))}</text>
+            </box>
+          )}
+          {playMode && !gpuIllumination && (
+            <PlaybackStatus
+              value={playbackVisual}
+              verseKey={verseKey}
+              activeWord={activeWordNumber}
+              totalWords={totalWords}
+              width={readerWidth}
+              timed={hasTimings}
+            />
+          )}
         </box>
-        {showStudy && layout.showAuxiliaryPanel && (
-          <StudyPanel snapshot={study?.verseKey === verseKey ? study : null} source={studySource} verseKey={verseKey} width={40} />
-        )}
-        {showHadith && hadithPage?.verseKey === verseKey && layout.showAuxiliaryPanel && (
-          <HadithPanel value={hadithPage} verseKey={verseKey} width={40} loadingMore={loadingMoreHadith} onLoadMore={loadMoreHadith} />
-        )}
       </box>
-      {showStudy && !layout.showAuxiliaryPanel && (
+      {showStudy && (
         <StudyPanel
           snapshot={study?.verseKey === verseKey ? study : null}
           source={studySource}
           verseKey={verseKey}
+          verseText={verse.text}
+          verseTranslation={verse.translation}
           width={Math.max(1, dimensions.width - 4)}
-          height={Math.max(1, dimensions.height - 8)}
+          height={Math.max(1, dimensions.height - 7)}
           overlay={true}
         />
       )}
-      {showHadith && hadithPage?.verseKey === verseKey && !layout.showAuxiliaryPanel && (
+      {showHadith && (
         <HadithPanel
-          value={hadithPage}
+          value={hadithPage?.verseKey === verseKey ? hadithPage : null}
           verseKey={verseKey}
+          verseText={verse.text}
+          verseTranslation={verse.translation}
           width={Math.max(1, dimensions.width - 4)}
-          height={Math.max(1, dimensions.height - 8)}
+          height={Math.max(1, dimensions.height - 7)}
           overlay={true}
           loadingMore={loadingMoreHadith}
           onLoadMore={loadMoreHadith}
@@ -1621,10 +1784,12 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
           </Suspense>
         </box>
       )}
-      <box height={5} zIndex={10} borderStyle="rounded" borderColor="#29404d" flexDirection="column" paddingLeft={1} paddingRight={1}>
-        <box flexDirection="row" justifyContent="space-between"><text fg="#d8b45d">{`${"━".repeat(filled)}${"─".repeat(progressWidth - filled)}  ${verseKey}`}</text><text fg="#60727a">{`${verseId}/${surah.totalVerses}`}</text></box>
-        <text fg="#8fa4aa">{message}</text>
-        <text fg="#60727a">{`j/k verse · / search · 1-4 mode · w study · W tafsir · h hadith · i image · p play · v follow · g spatial · r ayah/page · f script · M motion · q quit`}</text>
+      <box height={4} zIndex={10} borderStyle="rounded" borderColor="#29404d" flexDirection="column" paddingLeft={1} paddingRight={1}>
+        <box width="100%" flexDirection="row" justifyContent="space-between">
+          <text fg="#d8b45d">{`${"━".repeat(filled)}${"─".repeat(progressWidth - filled)}  ${verseKey} · ${footerMessage}`}</text>
+          <text fg="#60727a">{`${verseId}/${surah.totalVerses}`}</text>
+        </box>
+        <text fg="#60727a">{shortcuts}</text>
       </box>
       <ChoiceDialog
         visible={dialog !== null}

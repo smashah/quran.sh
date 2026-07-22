@@ -4,6 +4,16 @@ All notable changes to quran.sh are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- Rebuilt immersive study and related-hadith views as responsive task workspaces instead of fixed 40-column sidebars: the current ayah keeps a dedicated context card, commentary or narrations receive the remaining viewport, standard 88-column terminals use a readable split, and compact terminals stack the same content without exposing raw provider URLs.
+- Added a live follow-play HUD with preparation/buffering states, verified word position, elapsed and total time, progress, and next-ayah preload status. The main reader now keeps one stable centered ayah surface, exposes transliteration in Learn mode, and uses a shorter footer so controls no longer wrap through the reading area.
+
+### Fixed
+
+- Removed empty translation, topic, and morphology placeholders from study mode, kept Arabic blocks independently bounded inside scrollable panes, and made loading or unavailable states explicit instead of leaving apparently blank panels.
+- Replaced the release preview's browser reconstruction of OpenTUI snapshot spans with a real PTY recording path after confirming that `captureSpans()` displaced Quranic combining marks even though the live ANSI renderer emitted the Arabic correctly.
+
 ## [0.8.0] - 2026-07-22
 
 ### Added
