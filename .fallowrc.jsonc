@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/589885290490eeeb02fcc274defc55a3c11789dc/schema.json",
+  "entry": [
+    "src/index.ts",
+    "src/dev/**/*.{ts,tsx}",
+    "src/poc/**/*.{ts,tsx,css,html}",
+    "scripts/**/*.ts",
+    "test/**/*.{ts,tsx}"
+  ],
+  "ignoreDependencies": ["bun-webgpu", "onnxruntime-node"],
+  "duplicates": {
+    "ignore": ["test/**"],
+    "ignoreImports": true,
+    "minOccurrences": 3
+  }
+}
