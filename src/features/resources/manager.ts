@@ -120,19 +120,19 @@ const LicenseSchema = Schema.Struct({
   name: Schema.String,
   url: Schema.String,
   attribution: Schema.String,
-  redistribution: Schema.Literal("allowed", "local-import-only", "unknown"),
+  redistribution: Schema.Literals(["allowed", "local-import-only", "unknown"]),
 });
 const ManifestSchema = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   id: Schema.String,
   version: Schema.String,
   title: Schema.String,
-  kind: Schema.Literal(...RESOURCE_PACK_KINDS),
-  format: Schema.Literal("json", "sqlite"),
+  kind: Schema.Literals(RESOURCE_PACK_KINDS),
+  format: Schema.Literals(["json", "sqlite"]),
   source: SourceSchema,
   content: ContentSchema,
   license: LicenseSchema,
-  compatibility: Schema.Record({ key: Schema.String, value: Schema.String }),
+  compatibility: Schema.Record(Schema.String, Schema.String),
 });
 
 const SAFE_SEGMENT = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;

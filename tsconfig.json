@@ -10,6 +10,8 @@
     "moduleDetection": "force",
     "jsx": "react-jsx",
     "jsxImportSource": "@opentui/react",
+    // TypeScript 6+ no longer loads every @types package by default.
+    "types": ["bun"],
     "allowJs": true,
     // Bundler mode
     "moduleResolution": "bundler",

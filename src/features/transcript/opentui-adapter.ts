@@ -1,4 +1,4 @@
-import { RootRenderable, TextRenderable, type CliRenderer } from "@opentui/core";
+import { BoxRenderable, TextRenderable, type CliRenderer } from "@opentui/core";
 import type { TranscriptEntry } from "./coordinator.ts";
 import {
   alignRTL,
@@ -69,8 +69,12 @@ export function createOpenTuiScrollbackWriter(
     append(entry) {
       renderer.writeToScrollback(({ renderContext, width }) => {
         const lines = formatTranscriptEntryForScrollback(entry, width, options.rtlStrategy);
-        const root = new RootRenderable(renderContext);
-        root.flexDirection = "column";
+        // writeToScrollback supplies its own root; a plain column box is the snapshot content.
+        const root = new BoxRenderable(renderContext, {
+          flexDirection: "column",
+          width,
+          height: Math.max(1, lines.length),
+        });
         const id = transcriptRenderableId++;
         for (const [index, content] of lines.entries()) {
           root.add(new TextRenderable(renderContext, {
@@ -81,8 +85,6 @@ export function createOpenTuiScrollbackWriter(
             wrapMode: "none",
           }));
         }
-        root.resize(width, Math.max(1, lines.length));
-        root.calculateLayout();
         return {
           root,
           width,
