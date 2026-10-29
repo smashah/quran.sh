@@ -5,6 +5,7 @@ import ImmersiveApp from "../../src/tui/immersive-app.tsx";
 import { FeatureRuntimeProvider, type AnyRuntime } from "../../src/features/react.tsx";
 import { createFeatureRuntime } from "../../src/features/runtime.ts";
 import type { StudyService } from "../../src/features/study/service.ts";
+import { resetOnlineSourceSession } from "../../src/features/network/online-source-consent.ts";
 
 function emptyStudyService(): StudyService {
   return {
@@ -38,6 +39,7 @@ function emptyRuntime(): AnyRuntime {
 // so accepted playback falls through to the offline pack offer.
 const realFetch = globalThis.fetch;
 beforeEach(() => {
+  resetOnlineSourceSession();
   globalThis.fetch = (async () => { throw new Error("network disabled in tests"); }) as unknown as typeof fetch;
 });
 afterEach(() => {
@@ -48,7 +50,7 @@ describe("immersive confirmation flow", () => {
   test("Continue offline keeps the reader open and online features ask before connecting", async () => {
     const runtime = emptyRuntime();
     const setup = await testRender(
-      <FeatureRuntimeProvider runtime={runtime}><ImmersiveApp /></FeatureRuntimeProvider>,
+      <FeatureRuntimeProvider runtime={runtime}><ImmersiveApp initialVerseKey="1:1" /></FeatureRuntimeProvider>,
       { width: 100, height: 30 },
     );
     await setup.renderOnce();

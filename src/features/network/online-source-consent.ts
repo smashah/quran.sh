@@ -23,3 +23,8 @@ export function acceptOnlineSources(persist: boolean): void {
   acceptedForSession = true;
   if (persist) setPreference(ONLINE_SOURCE_DISCLOSURE_KEY, "true");
 }
+
+/** Forget a session-only acceptance; tests use this so one test's consent doesn't leak into the next. */
+export function resetOnlineSourceSession(): void {
+  acceptedForSession = false;
+}
