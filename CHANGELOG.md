@@ -4,6 +4,45 @@ All notable changes to quran.sh are documented here.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-29
+
+### Added
+
+- `:` opens a Go to dialog in the dashboard and immersive reader that accepts `2:255`, `18`, `kahf 10`, `yasin` or `the cow`, and explains bad input (for example "Al-Baqarah (2) has 286 verses").
+- The immersive reader now has `?` help, `b` bookmarks, `m` reading tracking, `l` translation language and `:` go-to, using the same keys as the dashboard. The stream reader gains `b` and `m`.
+- `quran immersive [ref]` and `quran stream [ref]` open at a reference; `quran help` works; `quran read` accepts `--arabic`, `--numbers` and `--lang <code>`, and `quran search` accepts `--lang`.
+- Recite now shows the next ayah as a cue, and Memorise hides it until `Space` reveals it, so the four immersive views are distinct. Switching views explains what each one shows.
+- Exact `/` search results can be chosen with `↑/↓`/`j/k` and opened with `Enter` or a click.
+
+### Changed
+
+- Renamed "Reading/Browsing mode" to **Track reading**. The status bar always shows `Tracking: ON/OFF (m)` next to `Colours: AUTO (dark) (D)`, so the two settings are no longer both called "Mode". The setting is shared by every reader.
+- Reading is logged the same way however you move (keys, search, cues, go-to, Activity panel or recitation), including the ayah you started on; the immersive and stream readers now log too. The mark-surah-as-read prompt appears for every jump to another surah and shows how many of its verses you have read.
+- `Tab`/`Shift+Tab` move forward and back between areas (Surahs, Reading stats, Reader, Activity) instead of stopping at each of the three reader panes; click a pane or use **Next Reader Pane** in the palette to focus one. `Shift+Tab` used to switch between the surah list and reading stats; that is now one of its stops.
+- Study keys (`b`, `m`, `c`, cues `1-9` and `!`-`(`) work from any area instead of silently doing nothing until a reader pane had focus.
+- In the immersive reader, `Cancel` on the online-sources notice is now **Continue offline**: the reader stays open with the bundled text, and online features ask before connecting. `q` still quits.
+- The command palette is filterable by typing (`j`/`k` still move while the filter is empty), keeps the selection in view, and leaves the key column empty for palette-only commands. Help is grouped by task and scrolls.
+- Surah names are matched forgivingly everywhere (`fatiha`, `Al-Fatiha`, `the cow`, Arabic names), with suggestions for near misses. CLI usage now names the installed `quran` command and lists the readers.
+- First-run Arabic calibration uses the available height, marks the recommended option, explains what to look for, and accepts `Esc` for the recommended choice.
+
+### Dependencies
+
+- OpenTUI (`@opentui/core`, `@opentui/react`, `@opentui/three`) 0.4.5 → 0.6.6, the newest release with two weeks of use behind it (0.7.0 and 0.8.0 shipped on 2026-10-25 and 2026-10-29). Migrated off the removed `getLayoutNode()`/`calculateLayout()` APIs and gave scrollback snapshots a plain column root. Bun `>=1.3.14` is now required, matching OpenTUI and CI.
+- effect 3.22 → 4.0.5 (`Schema.Literals`, positional `Schema.Record`). This also fixes resource-pack errors reaching the CLI wrapped in a `FiberFailure`, which hid their readable `code: message` output. The Effect runtime is about half the size.
+- typescript 5.9 → 7.0.2 (native compiler, about 6x faster typechecks; `tsconfig` now names `types: ["bun"]`), @tilawa/core 0.1 → 0.4.0 (same FastConformer API), @types/bun 1.4.3.
+- Held back on purpose: three and @types/three stay at 0.177 because `@opentui/three` pins that copy, react stays on 19.2 to match OpenTUI's reconciler, and onnxruntime-node stays at 1.27 because 1.31 enables Microsoft telemetry by default.
+- Raised the `adm-zip` override to 0.6.1 and `shell-quote` to 1.12.0 for published extraction, DoS and `quote()` injection advisories. `zod` 3 under `@opentui/three` → `jimp` keeps one memory-exhaustion advisory whose only fix is zod 4; jimp validates only options quran.sh passes it.
+
+### Fixed
+
+- Help and the command palette no longer draw rows on top of each other at common sizes such as 120×35.
+- The first-run calibration list no longer squashes a sample's preview row out of view.
+- The immersive footer no longer wraps through the progress line at 100 columns, and its status message no longer runs into the ayah counter.
+- Long ayat in short terminals start at the top of the immersive reader instead of overflowing into the header, and the header truncates the surah name instead of overlapping its status labels.
+- `+`/`-` are documented as Arabic word spacing (image zoom when the image is focused) consistently, `C` is documented as the image-cache key, and the README now lists 11 themes and two flow layouts.
+- `quran streak` prints "1 day" instead of "1 days", unknown options are reported instead of ignored, and `quran read 2:300` explains the verse count instead of the format.
+- Restored the dashboard layout test and made the immersive confirmation test hermetic, so the suite no longer depends on Quran.com being reachable.
+
 ## [0.9.0] - 2026-07-22
 
 ### Added
