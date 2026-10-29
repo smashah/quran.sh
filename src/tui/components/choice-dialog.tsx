@@ -13,6 +13,8 @@ export interface ChoiceDialogState {
   readonly description: readonly string[];
   readonly choices: readonly DialogChoice[];
   readonly onDismiss?: () => void;
+  /** What Esc does, when "Esc cancels" would be misleading. */
+  readonly escapeLabel?: string;
 }
 
 export interface ChoiceDialogProps {
@@ -21,6 +23,7 @@ export interface ChoiceDialogProps {
   readonly description: readonly string[];
   readonly choices: readonly DialogChoice[];
   readonly onDismiss: () => void;
+  readonly escapeLabel?: string;
 }
 
 export function choiceForKey(
@@ -105,7 +108,7 @@ export function ChoiceDialog(props: ChoiceDialogProps) {
           {choice.text}
         </text>
       ))}
-      <text fg="#52646b">Esc cancels</text>
+      <text fg="#52646b">{props.escapeLabel ?? "Esc cancels"}</text>
     </box>
   );
 }

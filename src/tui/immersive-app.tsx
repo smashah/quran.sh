@@ -1,7 +1,8 @@
 import { useKeyboard, useRenderer, useTerminalDimensions, useTimeline } from "@opentui/react";
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getSurah } from "../data/quran.ts";
+import { getSurah, isLanguageLoaded, LANGUAGES, loadLanguage } from "../data/quran.ts";
+import { getBookmarkedAyahs, toggleBookmark } from "../data/bookmarks.ts";
 import { presentationFor, READING_MODES, type CapabilityState, type ReadingExperienceMode } from "../features/experience/mode.ts";
 import { useFeatureCommand, useFeatureState } from "../features/react.tsx";
 import type { StudyService, StudySnapshot } from "../features/study/service.ts";
@@ -22,6 +23,9 @@ import type { ResourceRow, ResourceTextBlock } from "../features/resources/repos
 import type { HadithPage, HadithRecord } from "../features/hadith/types.ts";
 import { acceptOnlineSources, ONLINE_QURAN_SOURCE_DISCLOSURE, onlineSourcesAccepted as sharedOnlineSourcesAccepted } from "../features/network/online-source-consent.ts";
 import { adjacentVerseKey, useRecitationPlayback, type PlaybackNavigationIntent } from "./use-recitation-playback.ts";
+import { HelpDialog, type HelpSection } from "./components/help-dialog.tsx";
+import { GoToDialog } from "./components/go-to-dialog.tsx";
+import { saveTrackReading, savedTrackReading, useReadingTracker } from "./use-reading-tracker.ts";
 
 const SELECTED_TAFSIR_RESOURCE_KEY = "selectedTafsirResourceId";
 type StudySource = "local" | "online" | "hybrid";
@@ -39,6 +43,76 @@ const LazyFuzzySearchDialog = lazy(async () => {
 const modeLabels: Record<ReadingExperienceMode, string> = {
   focus: "Focus", learn: "Learn", recite: "Recite", memorise: "Memorise",
 };
+
+const modeDescriptions: Record<ReadingExperienceMode, string> = {
+  focus: "Focus view · Arabic with translation",
+  learn: "Learn view · adds transliteration · w tafsir · h related hadith",
+  recite: "Recite view · Arabic only with the next ayah as a cue · p plays · v follows you",
+  memorise: "Memorise view · Arabic only · the next ayah stays hidden until you press Space",
+};
+
+const IMMERSIVE_HELP_SECTIONS: readonly HelpSection[] = [
+  {
+    title: "Move around",
+    rows: [
+      ["↑/↓  j/k", "Previous / next ayah (continues across surahs)"],
+      [":", "Go to a verse or surah (2:255, kahf 10, yasin)"],
+      ["/ or Ctrl+F", "Search the Quran"],
+    ],
+  },
+  {
+    title: "Views (1-4)",
+    rows: [
+      ["1  Focus", "Arabic with translation"],
+      ["2  Learn", "Adds transliteration; w and h open study and hadith"],
+      ["3  Recite", "Arabic only, with the next ayah shown as a cue; p plays, v follows you"],
+      ["4  Memorise", "Arabic only; the next ayah stays hidden until you press Space"],
+      ["Space", "In Memorise: reveal or hide the next ayah"],
+    ],
+  },
+  {
+    title: "Study and history",
+    rows: [
+      ["b", "Bookmark the current ayah (shared with the dashboard)"],
+      ["m", "Track reading on/off (shared with the dashboard)"],
+      ["w / W", "Tafsir and study for this ayah / choose a saved tafsir"],
+      ["h", "Related hadith for this ayah"],
+      ["[ / ]", "Scroll the study or hadith panel · n loads more hadith"],
+    ],
+  },
+  {
+    title: "Listen and display",
+    rows: [
+      ["p", "Play or stop synchronized recitation"],
+      ["v", "Follow my recitation (local microphone and optional model)"],
+      ["i", "Online ayah image"],
+      ["g", "3D vector Arabic reader (offers terminal illumination as a fallback)"],
+      ["r / f", "In the 3D reader: ayah or page layout / Uthmani, IndoPak or Tajweed script"],
+      ["l", "Next translation language"],
+      ["M", "Reduced motion on/off"],
+    ],
+  },
+  {
+    title: "General",
+    rows: [
+      ["?", "Show or hide this help"],
+      ["q", "Quit"],
+      ["Online", "w, W, h, i, g and p ask before connecting if you chose Continue offline"],
+    ],
+  },
+];
+
+/** Fit as many footer hints as the width allows; help and quit always stay. */
+function fitShortcuts(items: readonly string[], width: number): string {
+  const pinned = ["? help", "q quit"];
+  const chosen: string[] = [];
+  for (const item of items) {
+    const candidate = [...chosen, item, ...pinned].join(" · ");
+    if (candidate.length > width) break;
+    chosen.push(item);
+  }
+  return [...chosen, ...pinned].join(" · ");
+}
 
 function fitTerminalLabel(value: string, width: number): string {
   if (width <= 0) return "";
@@ -312,19 +386,41 @@ function HadithPanel({
   );
 }
 
-function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
+interface ImmersiveProps {
+  readonly safeMode?: boolean;
+  readonly initialVerseKey?: `${number}:${number}`;
+}
+
+function initialImmersivePosition(initialVerseKey?: `${number}:${number}`): { surahId: number; verseId: number } {
+  const [requestedSurah, requestedVerse] = (initialVerseKey ?? "").split(":").map(Number);
+  if (requestedSurah && requestedVerse && getSurah(requestedSurah)?.verses[requestedVerse - 1]) {
+    return { surahId: requestedSurah, verseId: requestedVerse };
+  }
+  const savedSurah = Number(getPreference("selectedSurahId") ?? 1);
+  const savedVerse = Number(getPreference("currentVerseId") ?? 1);
+  if (!getSurah(savedSurah)) return { surahId: 1, verseId: 1 };
+  return { surahId: savedSurah, verseId: getSurah(savedSurah)?.verses[savedVerse - 1] ? savedVerse : 1 };
+}
+
+function ImmersiveAppContent({ safeMode = false, initialVerseKey }: ImmersiveProps) {
   const renderer = useRenderer();
   const dimensions = useTerminalDimensions();
   const layout = chooseReaderLayout(dimensions.width, dimensions.height);
-  const [surahId, setSurahId] = useState(() => {
-    const saved = Number(getPreference("selectedSurahId") ?? 1);
-    return getSurah(saved) ? saved : 1;
+  const [startPosition] = useState(() => initialImmersivePosition(initialVerseKey));
+  const [surahId, setSurahId] = useState(startPosition.surahId);
+  const [verseId, setVerseId] = useState(startPosition.verseId);
+  const [language, setLanguage] = useState(() => {
+    const saved = getPreference("language") ?? "en";
+    return isLanguageLoaded(saved) ? saved : "en";
   });
-  const [verseId, setVerseId] = useState(() => {
-    const savedSurah = Number(getPreference("selectedSurahId") ?? 1);
-    const savedVerse = Number(getPreference("currentVerseId") ?? 1);
-    return getSurah(savedSurah)?.verses[savedVerse - 1] ? savedVerse : 1;
+  const [trackReading, setTrackReading] = useState(savedTrackReading);
+  const [bookmarkedAyahs, setBookmarkedAyahs] = useState<Set<number>>(() => {
+    try { return getBookmarkedAyahs(startPosition.surahId); } catch { return new Set(); }
   });
+  const [showHelp, setShowHelp] = useState(false);
+  const [showGoTo, setShowGoTo] = useState(false);
+  const [revealNextAyah, setRevealNextAyah] = useState(false);
+  const [offlineChosen, setOfflineChosen] = useState(false);
   const [mode, setMode] = useState<ReadingExperienceMode>("focus");
   const [reducedMotion, setReducedMotion] = useState(() => getPreference("reducedMotion") === "true");
   const [message, setMessage] = useState("A calm space for attentive reading");
@@ -372,20 +468,29 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
   const clearPageCacheRef = useRef<(() => void) | null>(null);
   const spatialSurfaceRequestRef = useRef(0);
   const activePaneRef = useRef<"reader" | "study" | "hadith" | "image">("reader");
-  const surah = getSurah(surahId)!;
+  const surah = (getSurah(surahId, language) ?? getSurah(surahId))!;
   const verse = surah.verses[verseId - 1]!;
   const verseKey = `${surahId}:${verseId}` as const;
+  const nextAyahKey = adjacentVerseKey(surahId, verseId, 1);
+  const nextAyah = nextAyahKey
+    ? getSurah(Number(nextAyahKey.split(":")[0]))?.verses[Number(nextAyahKey.split(":")[1]) - 1] ?? null
+    : null;
   const verseKeyRef = useRef<string>(verseKey);
   const navigationCursorRef = useRef<`${number}:${number}`>(verseKey);
   verseKeyRef.current = verseKey;
   navigationCursorRef.current = verseKey;
 
   useEffect(() => {
-    if (safeMode || onlineSourcesAccepted) return;
+    if (safeMode || onlineSourcesAccepted || offlineChosen) return;
     const acceptForSession = () => {
       setOnlineSourcesAccepted(true);
       setDialog(null);
       setMessage("Online Quran sources enabled for this immersive session");
+    };
+    const continueOffline = () => {
+      setOfflineChosen(true);
+      setDialog(null);
+      setMessage("Reading offline · w, W, h, i, g and p ask before going online · q quits");
     };
     setDialog({
       title: "Online sources for immersive mode",
@@ -403,12 +508,55 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
         },
       }, {
         key: "c",
-        label: "Cancel",
-        action: () => renderer.destroy(),
+        label: "Continue offline",
+        detail: "Keep reading the bundled Quran text. Online features ask again when you open them; q quits.",
+        action: continueOffline,
       }],
-      onDismiss: () => renderer.destroy(),
+      onDismiss: continueOffline,
+      escapeLabel: "Esc continues offline",
     });
-  }, [onlineSourcesAccepted, renderer, safeMode]);
+  }, [offlineChosen, onlineSourcesAccepted, safeMode]);
+
+  /** Ask for the shared online-source consent before an online feature runs. */
+  const requireOnline = useCallback((purpose: string, run: () => void) => {
+    if (onlineSourcesAccepted) { run(); return; }
+    const accept = (persist: boolean) => {
+      acceptOnlineSources(persist);
+      setOnlineSourcesAccepted(true);
+      setDialog(null);
+      run();
+    };
+    const decline = () => {
+      setDialog(null);
+      setMessage(`${purpose} stays off · the Quran text remains available offline`);
+    };
+    setDialog({
+      title: `Go online for ${purpose}?`,
+      description: ONLINE_QURAN_SOURCE_DISCLOSURE,
+      choices: [
+        { key: "o", label: "OK", action: () => accept(false) },
+        { key: "d", label: "Don't show again", action: () => accept(true) },
+        { key: "c", label: "Not now", action: decline },
+      ],
+      onDismiss: decline,
+    });
+  }, [onlineSourcesAccepted]);
+
+  useEffect(() => {
+    const saved = getPreference("language");
+    if (!saved || saved === "en" || isLanguageLoaded(saved)) return;
+    void loadLanguage(saved).then(() => setLanguage(saved)).catch(() => undefined);
+  }, []);
+
+  useReadingTracker({ verseKey, enabled: trackReading });
+
+  useEffect(() => {
+    setRevealNextAyah(false);
+  }, [verseKey]);
+
+  useEffect(() => {
+    try { setBookmarkedAyahs(getBookmarkedAyahs(surahId)); } catch { /* DB may be unavailable */ }
+  }, [surahId]);
 
   useEffect(() => {
     setPreference("selectedSurahId", String(surahId));
@@ -1111,14 +1259,43 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : "Follow mode unavailable"); }
   }, [navigateTo, playback, recognitionFeature, safeMode]);
 
-  const toggleRecitation = useCallback(async () => {
+  const toggleRecitation = useCallback(async (options: { readonly allowOnlineSources?: boolean } = {}) => {
     if (!playback.isFollowing && followRef.current) {
       await followRef.current.stop();
       followRef.current = null;
       setRecognitionWordKey(null);
     }
-    await playback.toggle();
+    await playback.toggle(options);
   }, [playback]);
+
+  const toggleTracking = useCallback(() => {
+    const next = !trackReading;
+    setTrackReading(next);
+    saveTrackReading(next);
+    setMessage(next
+      ? "Tracking reading: ON · ayat you read count toward streaks (shared with the dashboard)"
+      : "Tracking reading: OFF · browsing without logging");
+  }, [trackReading]);
+
+  const toggleCurrentBookmark = useCallback(() => {
+    try {
+      const added = toggleBookmark(surahId, verseId, verseKey);
+      setBookmarkedAyahs(getBookmarkedAyahs(surahId));
+      setMessage(added ? `Bookmarked ${verseKey}` : `Removed the bookmark on ${verseKey}`);
+    } catch {
+      setMessage("Bookmarks are unavailable right now");
+    }
+  }, [surahId, verseId, verseKey]);
+
+  const cycleLanguage = useCallback(() => {
+    const index = LANGUAGES.indexOf(language as (typeof LANGUAGES)[number]);
+    const next = LANGUAGES[(index + 1) % LANGUAGES.length]!;
+    void loadLanguage(next).then(() => {
+      setLanguage(next);
+      setPreference("language", next);
+      setMessage(`Translation language: ${next.toUpperCase()}`);
+    }).catch(() => setMessage(`Could not load the ${next.toUpperCase()} translation`));
+  }, [language]);
 
   useEffect(() => {
     backdropRef.current?.setVerse(verseKey, verseId / surah.totalVerses);
@@ -1157,15 +1334,52 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
   }, [renderer]);
 
   useKeyboard((key) => {
-    if (dialog || searchOpenRef.current) return;
+    if (dialog || searchOpenRef.current || showHelp || showGoTo) return;
     if (key.sequence === "q") { renderer.destroy(); return; }
-    if (key.sequence && ["1", "2", "3", "4"].includes(key.sequence)) { setMode(READING_MODES[Number(key.sequence) - 1]!); return; }
-    if (key.sequence === "w") { setShowHadith(false); void inspect(); return; }
-    if (key.sequence === "W") { void chooseTafsir(); return; }
-    if (key.sequence === "h") { setShowStudy(false); void inspectHadith(); return; }
-    if (key.sequence === "i") { toggleImage(); return; }
-    if (key.sequence === "p") { void toggleRecitation(); return; }
-    if (key.sequence === "g") { void toggleSpatial(); return; }
+    if (key.sequence === "?") { setShowHelp(true); return; }
+    if (key.sequence === ":") { setShowGoTo(true); return; }
+    if (key.sequence === "m") { toggleTracking(); return; }
+    if (key.sequence === "b") { toggleCurrentBookmark(); return; }
+    if (key.sequence === "l") { cycleLanguage(); return; }
+    if (key.sequence === " " || key.name === "space") {
+      if (mode === "memorise") setRevealNextAyah((value) => !value);
+      else setMessage("Space reveals the next ayah in the Memorise view (press 4)");
+      return;
+    }
+    if (key.sequence && ["1", "2", "3", "4"].includes(key.sequence)) {
+      const nextMode = READING_MODES[Number(key.sequence) - 1]!;
+      setMode(nextMode);
+      setMessage(modeDescriptions[nextMode]);
+      return;
+    }
+    if (key.sequence === "w") {
+      setShowHadith(false);
+      if (showStudy) void inspect();
+      else requireOnline("tafsir and study", () => void inspect());
+      return;
+    }
+    if (key.sequence === "W") { requireOnline("the tafsir catalogue", () => void chooseTafsir()); return; }
+    if (key.sequence === "h") {
+      setShowStudy(false);
+      if (showHadith) void inspectHadith();
+      else requireOnline("related hadith", () => void inspectHadith());
+      return;
+    }
+    if (key.sequence === "i") {
+      if (showImage) toggleImage();
+      else requireOnline("the ayah image", toggleImage);
+      return;
+    }
+    if (key.sequence === "p") {
+      if (playback.isFollowing) void toggleRecitation();
+      else requireOnline("recitation", () => void toggleRecitation({ allowOnlineSources: true }));
+      return;
+    }
+    if (key.sequence === "g") {
+      if (backdropRef.current || terminalIllumination || gpuIllumination) void toggleSpatial();
+      else requireOnline("the 3D Quran reader", () => void toggleSpatial());
+      return;
+    }
     if (key.sequence === "r") { void toggleReadingLayout(); return; }
     if (key.sequence === "f") { void cycleScriptStyle(); return; }
     if (key.sequence === "v") { void toggleFollow(); return; }
@@ -1217,21 +1431,44 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
     ? 7
     : Math.min(13, Math.max(7, arabic.split("\n").length + (playMode ? 5 : 6)));
   const activePaneLabel = showStudy ? "STUDY" : showHadith ? "RELATED HADITH" : playMode ? "FOLLOW PLAY" : "READ";
+  const headerRight = `${modeLabels[mode]} view · ${activePaneLabel}${gpuIllumination ? ` · 3D ${scriptStyle.toLocaleUpperCase()} ${readingLayout.toLocaleUpperCase()}` : terminalIllumination ? " · CELL ARCH" : ""} · ${language.toUpperCase()}${trackReading ? " · TRACKING" : ""}${!onlineSourcesAccepted && !safeMode ? " · OFFLINE" : ""}${safeMode ? " · SAFE" : ""}  ☽`;
+  const headerLeft = fitTerminalLabel(
+    `☾  ${surahId}. ${surah.transliteration} · ${surah.translation}${bookmarkedAyahs.has(verseId) ? `  ★ ${verseKey}` : ""}`,
+    Math.max(12, dimensions.width - 6 - headerRight.length),
+  );
+  // Long ayat in short terminals start at the top instead of overflowing into the header.
+  const estimatedReadingHeight = arabicReadingHeight + 4
+    + (presentation.showTranslation ? Math.ceil(verse.translation.length / Math.max(20, readerWidth - 4)) + 1 : 0)
+    + (mode === "learn" ? 3 : mode === "recite" || mode === "memorise" ? 3 : 0)
+    + (playMode ? 4 : 0);
+  const readingCrowded = estimatedReadingHeight > dimensions.height - 7;
   const totalWords = verse.text.trim().split(/\s+/u).filter(Boolean).length;
-  const footerMessageWidth = Math.max(16, dimensions.width - progressWidth - 18);
+  // Borders and padding (4), the progress bar, "  2:255 · ", and " 255/286" all share the line.
+  const footerMessageWidth = Math.max(16, dimensions.width - 4 - progressWidth - (verseKey.length + 5) - (`${verseId}/${surah.totalVerses}`.length + 1));
   const footerMessage = fitTerminalLabel(message, footerMessageWidth);
-  const shortcuts = dimensions.width >= 100
-    ? "j/k verse · / search · 1–4 mode · w study · W tafsir · h hadith · p play · v follow · ? help · q quit"
-    : "j/k verse · / search · w study · h hadith · p play · q quit";
+  const shortcuts = fitShortcuts([
+    "j/k ayah",
+    "1–4 view",
+    ": go to",
+    "/ search",
+    "p play",
+    "w study",
+    "h hadith",
+    "b bookmark",
+    `m track ${trackReading ? "on" : "off"}`,
+    "W tafsir",
+    "v follow",
+    "l language",
+  ], Math.max(20, dimensions.width - 4));
 
   return (
     <box width="100%" height="100%" flexDirection="column" zIndex={1}>
       <box height={3} zIndex={10} flexDirection="row" borderStyle="rounded" borderColor="#355663" justifyContent="space-between" paddingLeft={1} paddingRight={1}>
-        <text fg="#d8b45d">{`☾  ${surahId}. ${surah.transliteration} · ${surah.translation}`}</text>
-        <text fg="#7797a5">{`${modeLabels[mode]} · ${layout.mode} · ${activePaneLabel}${gpuIllumination ? ` · 3D ${scriptStyle.toLocaleUpperCase()} ${readingLayout.toLocaleUpperCase()}` : terminalIllumination ? " · CELL ARCH" : ""}${safeMode ? " · SAFE" : ""}  ☽`}</text>
+        <text fg="#d8b45d" flexShrink={1} wrapMode="none">{headerLeft}</text>
+        <text fg="#7797a5" flexShrink={0}>{headerRight}</text>
       </box>
-      <box flexGrow={1} flexDirection="row">
-        <box flexGrow={1} flexDirection="column" alignItems="center" justifyContent="center" paddingLeft={2} paddingRight={2}>
+      <box flexGrow={1} flexDirection="row" overflow="hidden">
+        <box flexGrow={1} flexDirection="column" alignItems="center" justifyContent={readingCrowded ? "flex-start" : "center"} paddingLeft={2} paddingRight={2} overflow="hidden">
           <box width={readerWidth} minHeight={arabicReadingHeight} flexGrow={gpuIllumination ? 1 : undefined} zIndex={gpuIllumination ? 3 : undefined} marginTop={1} marginBottom={1} padding={1} borderStyle="double" borderColor={terminalIllumination || gpuIllumination ? "#8cd4cf" : focusGlow < 0.55 ? "#5b4c2d" : "#8b7441"} title={` ${verseKey} `} titleAlignment="center" alignItems="center" justifyContent="center">
             {terminalIllumination && <TerminalIllumination verseKey={verseKey} />}
             {gpuIllumination ? null : activeRenderedRange ? (
@@ -1251,6 +1488,17 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
             <box width={readerWidth} minHeight={2} alignItems="center" justifyContent="center" paddingLeft={2} paddingRight={2}>
               <text fg="#60727a">{centerTerminalLines(verse.transliteration, Math.max(20, readerWidth - 4))}</text>
             </box>
+          )}
+          {(mode === "recite" || mode === "memorise") && !gpuIllumination && nextAyah && nextAyahKey && (
+            <box width={readerWidth} minHeight={2} flexDirection="column" alignItems="center" justifyContent="center" paddingLeft={2} paddingRight={2}>
+              <text fg="#52646b">{`NEXT · ${nextAyahKey}`}</text>
+              {presentation.hideNextVerse && !revealNextAyah
+                ? <text fg="#60727a">{"Hidden while you memorise · Space reveals it"}</text>
+                : <text fg="#6f7b76" wrapMode="none">{renderArabicVerse(nextAyah.text, 0, lineWidth).split("\n")[0] ?? ""}</text>}
+            </box>
+          )}
+          {mode === "learn" && !showStudy && !showHadith && (
+            <text fg="#52646b">{"w opens tafsir and study · h related hadith · W chooses a tafsir"}</text>
           )}
           {playMode && !gpuIllumination && (
             <PlaybackStatus
@@ -1322,12 +1570,32 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
         description={dialog?.description ?? []}
         choices={dialog?.choices ?? []}
         onDismiss={() => dialog?.onDismiss ? dialog.onDismiss() : setDialog(null)}
+        escapeLabel={dialog?.escapeLabel}
+      />
+      <HelpDialog
+        visible={showHelp}
+        onClose={() => setShowHelp(false)}
+        title="Immersive reader keys"
+        sections={IMMERSIVE_HELP_SECTIONS}
+      />
+      <GoToDialog
+        visible={showGoTo}
+        onSelect={(nextSurahId, nextVerseId) => {
+          setShowGoTo(false);
+          setShowStudy(false);
+          setShowHadith(false);
+          setShowImage(false);
+          activePaneRef.current = "reader";
+          navigateTo(`${nextSurahId}:${nextVerseId}`);
+          setMessage(`Went to ${nextSurahId}:${nextVerseId}`);
+        }}
+        onDismiss={() => setShowGoTo(false)}
       />
       {showSearch && (
         <Suspense fallback={<text zIndex={100} fg="#d8b45d">Loading Quran search…</text>}>
           <LazyFuzzySearchDialog
             visible={true}
-            language="en"
+            language={language}
             onSelect={(nextSurahId, nextVerseId) => {
               searchOpenRef.current = false;
               setShowSearch(false);
@@ -1346,7 +1614,7 @@ function ImmersiveAppContent({ safeMode = false }: { safeMode?: boolean }) {
   );
 }
 
-export default function ImmersiveApp(props: { safeMode?: boolean }) {
+export default function ImmersiveApp(props: ImmersiveProps) {
   return (
     <ModeProvider>
       <ThemeProvider>

@@ -5,6 +5,9 @@ import { useTheme } from "../theme";
 interface MarkSurahDialogProps {
   visible: boolean;
   surahName: string;
+  /** Verses of this surah already in your reading history. */
+  readCount?: number;
+  totalVerses?: number;
   onConfirm: () => void;
   onDismiss: () => void;
 }
@@ -31,7 +34,7 @@ export function MarkSurahDialog(props: MarkSurahDialogProps) {
       top="35%"
       left="25%"
       width="50%"
-      height={9}
+      height={11}
       borderStyle={theme.borderStyleFocused}
       customBorderChars={theme.borderChars}
       borderColor={theme.colors.highlight}
@@ -56,7 +59,14 @@ export function MarkSurahDialog(props: MarkSurahDialogProps) {
 
       <box justifyContent="center" marginTop={1}>
         <text fg={theme.colors.muted}>
-          {"This logs all verses in the surah to your reading activity."}
+          {props.readCount !== undefined && props.totalVerses
+            ? `You've read ${props.readCount} of ${props.totalVerses} verses so far.`
+            : "Tracking reading is on, so leaving a surah asks this."}
+        </text>
+      </box>
+      <box justifyContent="center">
+        <text fg={theme.colors.muted}>
+          {"Yes logs every verse in the surah; No just moves on."}
         </text>
       </box>
     </box>

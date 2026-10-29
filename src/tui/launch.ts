@@ -7,10 +7,20 @@ import { createFeatureCatalog } from "../features/catalog.ts";
 import { FeatureRuntimeProvider } from "../features/react.tsx";
 import type { AnyRuntime } from "../features/react.tsx";
 import { APP_DATA_DIR } from "../data/db.ts";
+import { getPreference } from "../data/preferences.ts";
+import { getSurah } from "../data/quran.ts";
 
 export interface LaunchTuiOptions {
   readonly experience?: "reader" | "immersive" | "stream";
   readonly safeMode?: boolean;
+  /** Where to open; defaults to the position shared by every reader. */
+  readonly initialVerseKey?: `${number}:${number}`;
+}
+
+function savedVerseKey(): `${number}:${number}` {
+  const surahId = Number(getPreference("selectedSurahId") ?? 1);
+  const verseId = Number(getPreference("currentVerseId") ?? 1);
+  return getSurah(surahId)?.verses[verseId - 1] ? `${surahId}:${verseId}` : "1:1";
 }
 
 export async function launchTui(options: LaunchTuiOptions = {}): Promise<void> {
@@ -40,5 +50,6 @@ export async function launchTui(options: LaunchTuiOptions = {}): Promise<void> {
     : experience === "stream"
       ? (await import("./stream-app.tsx")).default
       : (await import("./app.tsx")).default;
-  createRoot(renderer).render(createElement(FeatureRuntimeProvider, { runtime: features as unknown as AnyRuntime }, createElement(App, { safeMode: options.safeMode })));
+  const initialVerseKey = options.initialVerseKey ?? (experience === "stream" ? savedVerseKey() : undefined);
+  createRoot(renderer).render(createElement(FeatureRuntimeProvider, { runtime: features as unknown as AnyRuntime }, createElement(App, { safeMode: options.safeMode, initialVerseKey })));
 }

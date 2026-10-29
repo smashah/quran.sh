@@ -31,6 +31,38 @@ export function focusReducer(current: FocusablePane, action: FocusAction): Focus
   return panes[(currentIndex + 1) % panes.length] ?? panes[0]!;
 }
 
+/**
+ * Tab moves between areas rather than every pane: the Arabic, Translation
+ * and Transliteration panes all follow the same verse, so they share one stop.
+ */
+export type FocusRegion = "surahs" | "stats" | "reader" | "panel";
+
+export function visibleRegions(visibility: PaneVisibility): FocusRegion[] {
+  const regions: FocusRegion[] = [];
+  if (visibility.showSidebar) regions.push("surahs", "stats");
+  if (visibility.showArabic || visibility.showTranslation || visibility.showTransliteration) regions.push("reader");
+  if (visibility.showPanel) regions.push("panel");
+  return regions;
+}
+
+export function regionOf(pane: FocusablePane, sidebarSubFocus: "surahList" | "stats"): FocusRegion {
+  if (pane === "sidebar") return sidebarSubFocus === "stats" ? "stats" : "surahs";
+  if (pane === "panel") return "panel";
+  return "reader";
+}
+
+export function stepRegion(current: FocusRegion, visibility: PaneVisibility, direction: 1 | -1): FocusRegion {
+  const regions = visibleRegions(visibility);
+  if (regions.length === 0) return current;
+  const index = regions.indexOf(current);
+  if (index === -1) return direction === 1 ? regions[0]! : regions[regions.length - 1]!;
+  return regions[(index + direction + regions.length) % regions.length]!;
+}
+
+export function isReaderPane(pane: FocusablePane): boolean {
+  return pane === "arabic" || pane === "translation" || pane === "transliteration";
+}
+
 export function firstReaderPane(visibility: PaneVisibility): FocusablePane {
   const panes = visiblePanes(visibility);
   return panes.find((pane) => pane === "arabic" || pane === "translation" || pane === "transliteration")

@@ -14,7 +14,8 @@ import { MarkSurahDialog } from "./components/mark-surah-dialog";
 import { ResetTrackingDialog } from "./components/reset-tracking-dialog";
 import { FuzzySearchDialog } from "./components/fuzzy-search-dialog";
 import { reindex } from "../data/fuzzy-search";
-import { CommandPalette } from "./components/command-palette";
+import { CommandPalette, filterCommands } from "./components/command-palette";
+import { GoToDialog } from "./components/go-to-dialog.tsx";
 import { RtlCalibrationDialog } from "./components/rtl-calibration-dialog";
 import { setRtlStrategy, getRtlStrategy, type RtlStrategy } from "./utils/rtl";
 import { copyAyahImage } from "./utils/clipboard";
@@ -26,7 +27,6 @@ import type { Cue } from "../data/cues";
 import { getAllReflections, addReflection, getReflection } from "../data/reflections";
 import type { Reflection } from "../data/reflections";
 import { getSurah, search, LANGUAGES, isLanguageLoaded, loadLanguage } from "../data/quran";
-import { logVerse } from "../data/log";
 import { logSurah, deleteReadingLog, getCompletedSurahIds, getReadVerseIds } from "../data/log";
 import type { ResetPeriod } from "../data/log";
 import { getPreference, setPreference } from "../data/preferences";
@@ -35,7 +35,8 @@ import { ThemeProvider, useTheme } from "./theme";
 import type { Theme } from "./theme";
 import { ModeProvider, useMode } from "./mode";
 import { buildAppCommands, type AppCommandId, type CommandActions } from "./commands.ts";
-import { firstReaderPane, focusReducer, type FocusablePane, type PaneVisibility } from "./focus.ts";
+import { firstReaderPane, focusReducer, isReaderPane, regionOf, stepRegion, visiblePanes, type FocusablePane, type FocusRegion, type PaneVisibility } from "./focus.ts";
+import { useReadingTracker } from "./use-reading-tracker.ts";
 import { ChoiceDialog, type ChoiceDialogState } from "./components/choice-dialog.tsx";
 import { PlaybackStatus } from "./components/playback-status.tsx";
 import { acceptOnlineSources, ONLINE_QURAN_SOURCE_DISCLOSURE, onlineSourcesAccepted as sharedOnlineSourcesAccepted } from "../features/network/online-source-consent.ts";
@@ -93,20 +94,32 @@ if (savedPrefs.rtlStrategy) {
   setRtlStrategy(savedPrefs.rtlStrategy as RtlStrategy);
 }
 
-function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
+interface AppProps {
+  readonly safeMode?: boolean;
+  readonly initialVerseKey?: `${number}:${number}`;
+}
+
+function initialPosition(initialVerseKey?: `${number}:${number}`): { surahId: number; verseId: number } {
+  const [surahId, verseId] = (initialVerseKey ?? "").split(":").map(Number);
+  if (surahId && verseId && getSurah(surahId)?.verses[verseId - 1]) return { surahId, verseId };
+  return { surahId: savedPrefs.selectedSurahId, verseId: savedPrefs.currentVerseId };
+}
+
+function AppContent({ safeMode = false, initialVerseKey }: AppProps) {
   const { cycleTheme } = useTheme();
   const { cycleMode } = useMode();
   const renderer = useRenderer();
   const dimensions = useTerminalDimensions();
+  const [startPosition] = useState(() => initialPosition(initialVerseKey));
 
-  const [selectedSurahId, setSelectedSurahId] = useState(savedPrefs.selectedSurahId);
+  const [selectedSurahId, setSelectedSurahId] = useState(startPosition.surahId);
   const [focusedPanel, dispatchFocus] = useReducer(focusReducer, "sidebar");
   const setFocusedPanel = useCallback((pane: FocusablePane) => {
     dispatchFocus({ type: "set", pane });
   }, []);
   const [sidebarSubFocus, setSidebarSubFocus] = useState<"surahList" | "stats">("surahList");
   const [surahSearchFocused, setSurahSearchFocused] = useState(false);
-  const [currentVerseId, setCurrentVerseId] = useState(savedPrefs.currentVerseId);
+  const [currentVerseId, setCurrentVerseId] = useState(startPosition.verseId);
   const [bookmarkedAyahs, setBookmarkedAyahs] = useState<Set<number>>(new Set());
   const [isSearchMode, setIsSearchMode] = useState(false);
   const [searchInput, setSearchInput] = useState("");
@@ -117,6 +130,10 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
   const [showPanel, setShowPanel] = useState(savedPrefs.showPanel);
   const [showPalette, setShowPalette] = useState(false);
   const [paletteIndex, setPaletteIndex] = useState(0);
+  const [paletteQuery, setPaletteQuery] = useState("");
+  const [showGoTo, setShowGoTo] = useState(false);
+  const [searchIndex, setSearchIndex] = useState(0);
+  const lastReaderPaneRef = useRef<FocusablePane>("arabic");
   const [showReflectionDialog, setShowReflectionDialog] = useState(false);
   const [reflectionInput, setReflectionInput] = useState("");
   const [arabicZoom, setArabicZoom] = useState(savedPrefs.arabicZoom);
@@ -132,7 +149,12 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
   const [flashMessage, setFlashMessage] = useState("");
   const [readingMode, setReadingMode] = useState(savedPrefs.readingMode);
   const [showMarkSurahDialog, setShowMarkSurahDialog] = useState(false);
-  const [pendingSurahChange, setPendingSurahChange] = useState<{ fromId: number; toId: number } | null>(null);
+  const [pendingSurahChange, setPendingSurahChange] = useState<{
+    fromId: number;
+    toId: number;
+    toVerse: number;
+    after?: () => void;
+  } | null>(null);
   // Track surahs already marked as read this session to avoid duplicate prompts (issue #5)
   const markedSurahsRef = useRef<Set<number>>(new Set());
   const [showResetDialog, setShowResetDialog] = useState(false);
@@ -271,17 +293,38 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
     } catch { /* DB */ }
   }, [selectedSurahId]);
 
-  const isReaderPane = (p: FocusablePane) => p === "arabic" || p === "translation" || p === "transliteration";
+  // Every navigation path (keys, search, cues, go-to, recitation) is logged
+  // the same way while reading is tracked.
+  useReadingTracker({ verseKey, enabled: readingMode, onLogged: refreshCompletionData });
 
-  const cycleFocus = useCallback(() => {
-    dispatchFocus({
-      type: "cycle",
-      visibility: { showSidebar, showArabic, showTranslation, showTransliteration, showPanel },
-    });
-  }, [showSidebar, showArabic, showTranslation, showTransliteration, showPanel]);
+  useEffect(() => {
+    if (isReaderPane(focusedPanel)) lastReaderPaneRef.current = focusedPanel;
+  }, [focusedPanel]);
+
+  const focusRegion = useCallback((region: FocusRegion, visibility: PaneVisibility) => {
+    if (region === "surahs" || region === "stats") {
+      setSidebarSubFocus(region === "stats" ? "stats" : "surahList");
+      dispatchFocus({ type: "set", pane: "sidebar" });
+      return;
+    }
+    if (region === "panel") {
+      dispatchFocus({ type: "set", pane: "panel" });
+      return;
+    }
+    const remembered = lastReaderPaneRef.current;
+    const pane = visiblePanes(visibility).includes(remembered) ? remembered : firstReaderPane(visibility);
+    dispatchFocus({ type: "set", pane });
+  }, []);
+
+  const stepFocus = useCallback((direction: 1 | -1) => {
+    const visibility = { showSidebar, showArabic, showTranslation, showTransliteration, showPanel };
+    focusRegion(stepRegion(regionOf(focusedPanel, sidebarSubFocus), visibility, direction), visibility);
+  }, [focusRegion, focusedPanel, sidebarSubFocus, showSidebar, showArabic, showTranslation, showTransliteration, showPanel]);
+
+  const cycleFocus = useCallback(() => stepFocus(1), [stepFocus]);
 
   // True when any modal/overlay is open — used to disable focus on child components
-  const anyModalOpen = showPalette || showReflectionDialog || showHelp || isSearchMode || showMarkSurahDialog || showResetDialog || showFuzzySearch || showCalibration || showImageWarningDialog || showTafsir || playbackDialog !== null;
+  const anyModalOpen = showPalette || showReflectionDialog || showHelp || isSearchMode || showMarkSurahDialog || showResetDialog || showFuzzySearch || showCalibration || showImageWarningDialog || showTafsir || showGoTo || playbackDialog !== null;
 
   // Keep the latest state available inside the keyboard handler
   // (avoids stale closures without needing to list every state var as dep)
@@ -293,7 +336,30 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
     language, panelTab, panelIndex, allBookmarks, allCues, allReflections, anyModalOpen,
     arabicAlign, arabicWidth, arabicFlow, readingMode, hasSeenImageWarning, showImageWarningDialog,
     showMarkSurahDialog, showResetDialog, showFuzzySearch, showCalibration, showTafsir, playbackDialog,
+    paletteQuery, showGoTo, searchIndex,
   });
+
+  const navigateTo = useCallback((surahId: number, verseId: number) => {
+    setSelectedSurahId(surahId);
+    setCurrentVerseId(verseId);
+    try { setBookmarkedAyahs(getBookmarkedAyahs(surahId)); } catch { /* DB may be unavailable */ }
+  }, []);
+
+  /**
+   * Every jump the reader asks for goes through here, so the "mark surah as
+   * read?" prompt appears for cues, search, go-to and Activity jumps too, not
+   * only the sidebar. Recitation auto-advance moves without asking.
+   */
+  const requestNavigate = useCallback((surahId: number, verseId: number, after?: () => void) => {
+    const s = stateRef.current;
+    if (s.readingMode && s.selectedSurahId !== surahId && !markedSurahsRef.current.has(s.selectedSurahId)) {
+      setPendingSurahChange({ fromId: s.selectedSurahId, toId: surahId, toVerse: verseId, after });
+      setShowMarkSurahDialog(true);
+      return;
+    }
+    navigateTo(surahId, verseId);
+    after?.();
+  }, [navigateTo]);
 
   const paneVisibility = (overrides: Partial<PaneVisibility> = {}): PaneVisibility => ({
     showSidebar: stateRef.current.showSidebar,
@@ -342,7 +408,9 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
     },
     "toggle-reading": () => setReadingMode((enabled) => {
       const next = !enabled;
-      showFlash(next ? "📖 Reading mode" : "📋 Browsing mode");
+      showFlash(next
+        ? "📖 Tracking reading: ON · verses you read now count toward streaks"
+        : "📋 Tracking reading: OFF · browsing without logging");
       return next;
     }),
     "cycle-mode": cycleMode,
@@ -414,6 +482,15 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
       } catch { /* DB may not be available in tests */ }
     },
     "cycle-focus": cycleFocus,
+    "previous-focus": () => stepFocus(-1),
+    "next-reader-pane": () => {
+      const s = stateRef.current;
+      const readerPanes = visiblePanes(paneVisibility()).filter(isReaderPane);
+      if (readerPanes.length === 0) return;
+      const index = readerPanes.indexOf(s.focusedPanel);
+      setFocusedPanel(readerPanes[(index + 1) % readerPanes.length]!);
+    },
+    "go-to": () => setShowGoTo(true),
     search: () => {
       setIsSearchMode(true);
       setSearchInput("");
@@ -448,6 +525,7 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
   };
 
   const paletteCommands = buildAppCommands(commandActions);
+  const filteredPaletteCommands = filterCommands(paletteCommands, paletteQuery);
   const runCommand = (id: AppCommandId): void => {
     paletteCommands.find((command) => command.id === id)?.action();
   };
@@ -457,25 +535,37 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
     const str = key.sequence || key.name;
 
     if (s.showPalette) {
+      const matches = filterCommands(paletteCommands, s.paletteQuery);
       if (key.name === "escape" || (key.ctrl && key.name === "p")) {
         setShowPalette(false);
         return;
       }
-      if (str === "j" || key.name === "down") {
-        setPaletteIndex((prev) => (prev + 1) % paletteCommands.length);
+      // j/k keep navigating while the filter is empty; otherwise they type.
+      const navigateWithLetters = s.paletteQuery.length === 0;
+      if (key.name === "down" || (navigateWithLetters && str === "j") || (key.ctrl && key.name === "n")) {
+        if (matches.length > 0) setPaletteIndex((prev) => (prev + 1) % matches.length);
         return;
       }
-      if (str === "k" || key.name === "up") {
-        setPaletteIndex((prev) => (prev - 1 + paletteCommands.length) % paletteCommands.length);
+      if (key.name === "up" || (navigateWithLetters && str === "k")) {
+        if (matches.length > 0) setPaletteIndex((prev) => (prev - 1 + matches.length) % matches.length);
         return;
       }
       if (key.name === "return" || key.name === "enter") {
-        const cmd = paletteCommands[s.paletteIndex];
+        const cmd = matches[s.paletteIndex];
         if (cmd) {
-          cmd.action();
           setShowPalette(false);
+          cmd.action();
         }
         return;
+      }
+      if (key.name === "backspace") {
+        setPaletteQuery((prev) => prev.slice(0, -1));
+        setPaletteIndex(0);
+        return;
+      }
+      if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta && key.sequence >= " ") {
+        setPaletteQuery((prev) => prev + key.sequence);
+        setPaletteIndex(0);
       }
       return;
     }
@@ -488,6 +578,8 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
       s.showResetDialog ||
       s.showFuzzySearch ||
       s.showTafsir ||
+      s.showGoTo ||
+      s.showHelp ||
       s.playbackDialog
     ) return;
 
@@ -519,13 +611,6 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
       return;
     }
 
-    if (s.showHelp) {
-      if (key.name === 'escape' || key.name === 'q' || str === '?') {
-        setShowHelp(false);
-      }
-      return;
-    }
-
     if (s.isSearchMode) {
       if (key.name === 'escape') {
         setIsSearchMode(false);
@@ -540,6 +625,8 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
           const results = search(query, s.language);
           setSearchResults(results);
           setSearchQuery(query);
+          setSearchIndex(0);
+          if (results.length === 0) showFlash(`No verses match "${query}"`);
         }
         setIsSearchMode(false);
         return;
@@ -558,44 +645,26 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
     // --- Beyond this point: global shortcuts ---
     const sidebarActive = s.focusedPanel === "sidebar";
 
-    // When sidebar is focused AND the surah search input is active,
-    // block everything except Tab/Shift+Tab so the <input> can type freely.
-    // When sidebar is focused but search is NOT active, allow global shortcuts
-    // to pass through (the <select> only uses up/down/enter internally).
+    // When the sidebar's surah filter input is active it owns typing; only
+    // Tab/Shift+Tab (move area) and Escape (leave the filter) get through.
     if (sidebarActive && surahSearchFocused) {
-      if (key.name === 'tab' && key.shift) {
-        setSidebarSubFocus((prev) => prev === "surahList" ? "stats" : "surahList");
+      if (key.name === "tab") {
+        stepFocus(key.shift ? -1 : 1);
         return;
       }
-      if (key.name === 'tab') {
-        setSidebarSubFocus("surahList");
-        cycleFocus();
-      }
-      if (key.name === 'escape') {
+      if (key.name === "escape") {
         setSurahSearchFocused(false);
       }
       return;
     }
 
-    // Sidebar focused but search NOT active — allow Tab navigation
-    if (sidebarActive) {
-      if (key.name === 'tab' && key.shift) {
-        setSidebarSubFocus((prev) => prev === "surahList" ? "stats" : "surahList");
-        return;
-      }
-      if (key.name === 'tab') {
-        setSidebarSubFocus("surahList");
-        cycleFocus();
-        return;
-      }
-      // SurahList owns `/` and moves focus into its inline search input.
-      if (str === "/") return;
-      // Fall through to global shortcuts below
-    }
+    // SurahList owns `/` while it is focused and opens its inline filter.
+    if (sidebarActive && s.focusedPanel === "sidebar" && sidebarSubFocus === "surahList" && str === "/") return;
 
     if (key.ctrl && key.name === "p") {
       setShowPalette(true);
       setPaletteIndex(0);
+      setPaletteQuery("");
       return;
     }
 
@@ -627,14 +696,36 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
       if (key.name === "return") {
         const item = items[s.panelIndex];
         if (item) {
-          setSelectedSurahId(item.surah);
-          setCurrentVerseId(item.ayah);
-          refreshBookmarks();
+          const openReflection = s.panelTab === "reflections"
+            ? () => {
+              setReflectionInput((item as Reflection).note);
+              setShowReflectionDialog(true);
+            }
+            : undefined;
+          requestNavigate(item.surah, item.ayah, openReflection);
+        }
+        return;
+      }
+    }
 
-          if (s.panelTab === "reflections") {
-            setReflectionInput((item as Reflection).note);
-            setShowReflectionDialog(true);
-          }
+    // Search results replace the reader: arrows/j/k choose a result and
+    // Enter opens it, instead of moving the hidden verse behind them.
+    if (s.searchResults.length > 0 && !sidebarActive && s.focusedPanel !== "panel") {
+      if (str === "j" || key.name === "down") {
+        setSearchIndex((prev) => Math.min(prev + 1, s.searchResults.length - 1));
+        return;
+      }
+      if (str === "k" || key.name === "up") {
+        setSearchIndex((prev) => Math.max(prev - 1, 0));
+        return;
+      }
+      if (key.name === "return" || key.name === "enter") {
+        const result = s.searchResults[s.searchIndex];
+        if (result) {
+          setSearchResults([]);
+          setSearchQuery("");
+          requestNavigate(result.surahId, result.verseId);
+          showFlash(`Opened ${result.reference}`);
         }
         return;
       }
@@ -643,7 +734,7 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
     const shortcut = key.ctrl && key.name === "f"
       ? "Ctrl+F"
       : key.name === "tab"
-        ? "Tab"
+        ? key.shift ? "Shift+Tab" : "Tab"
         : str === "="
           ? "+"
           : str;
@@ -663,70 +754,51 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
       return;
     }
 
+    // Cues work from any area, like the other study keys.
+    const cueSetSymbols: Record<string, number> = {
+      '!': 1, '@': 2, '#': 3, '$': 4, '%': 5, '^': 6, '&': 7, '*': 8, '(': 9
+    };
+    const cueJumpKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
+
+    if (str && cueSetSymbols[str]) {
+      const slot = cueSetSymbols[str]!;
+      const verseRef = `${s.selectedSurahId}:${s.currentVerseId}`;
+      try {
+        setCue(slot, s.selectedSurahId, s.currentVerseId, verseRef);
+        showFlash(`Cue ${slot} set \u2192 ${verseRef}`);
+        if (s.showPanel) refreshPanelData();
+      } catch { /* DB */ }
+      return;
+    }
+
+    if (str && cueJumpKeys.includes(str)) {
+      const slot = parseInt(str, 10);
+      try {
+        const cue = getCue(slot);
+        if (cue) {
+          requestNavigate(cue.surah, cue.ayah);
+          showFlash(`Jumped to Cue ${slot} (${cue.verseRef})`);
+        } else {
+          showFlash(`Cue ${slot} is empty · Shift+${slot} saves the current verse there`);
+        }
+      } catch { /* DB */ }
+      return;
+    }
+
     if (isReaderPane(s.focusedPanel)) {
-      const cueSetSymbols: Record<string, number> = {
-        '!': 1, '@': 2, '#': 3, '$': 4, '%': 5, '^': 6, '&': 7, '*': 8, '(': 9
-      };
-      const cueJumpKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
-
-      if (str && cueSetSymbols[str]) {
-        const slot = cueSetSymbols[str]!;
-        const verseRef = `${s.selectedSurahId}:${s.currentVerseId}`;
-        try {
-          setCue(slot, s.selectedSurahId, s.currentVerseId, verseRef);
-          showFlash(`Cue ${slot} set \u2192 ${verseRef}`);
-          if (s.showPanel) refreshPanelData();
-        } catch { /* DB */ }
-        return;
-      }
-
-      if (str && cueJumpKeys.includes(str)) {
-        const slot = parseInt(str, 10);
-        try {
-          const cue = getCue(slot);
-          if (cue) {
-            setSelectedSurahId(cue.surah);
-            setCurrentVerseId(cue.ayah);
-            refreshBookmarks();
-            showFlash(`Jumped to Cue ${slot} (${cue.verseRef})`);
-          }
-        } catch { /* DB */ }
-        return;
-      }
-
       if (str === 'j' || key.name === 'down') {
         const surah = getSurah(s.selectedSurahId);
         if (surah && s.currentVerseId < surah.totalVerses) {
-          const newVerse = s.currentVerseId + 1;
           setCurrentVerseId((prev) => Math.min(surah.totalVerses, prev + 1));
-          if (s.readingMode) {
-            try { logVerse(`${s.selectedSurahId}:${newVerse}`); } catch { /* DB */ }
-          }
         }
       }
       if (str === 'k' || key.name === 'up') {
         if (s.currentVerseId > 1) {
-          const newVerse = s.currentVerseId - 1;
           setCurrentVerseId((prev) => Math.max(1, prev - 1));
-          if (s.readingMode) {
-            try { logVerse(`${s.selectedSurahId}:${newVerse}`); } catch { /* DB */ }
-          }
         }
-      }
-      if (str === 'b') {
-        runCommand("toggle-bookmark");
-        return;
-      }
-      if (str === 'c') {
-        runCommand("copy-image");
-        return;
       }
       if (str === 'h') {
         runCommand("help");
-        return;
-      }
-      if (str === 'm') {
-        runCommand("toggle-reading");
         return;
       }
     }
@@ -755,6 +827,15 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
   const totalPlaybackWords = selectedVerse?.text.trim().split(/\s+/u).filter(Boolean).length ?? 0;
   const readerWidth = Math.max(32, Math.floor(dimensions.width * (1 - (showSidebar ? 0.25 : 0) - (showPanel ? 0.25 : 0))));
   const showPlaybackStatus = playback.isFollowing || playback.visual.status !== "idle";
+  const focusLabel = focusedPanel === "sidebar"
+    ? sidebarSubFocus === "stats" ? "Reading stats" : "Surahs"
+    : focusedPanel === "panel" ? "Activity"
+      : searchResults.length > 0 ? "Search results"
+        : `Reader · ${focusedPanel[0]!.toUpperCase()}${focusedPanel.slice(1)}`;
+  let pendingReadCount: number | undefined;
+  if (pendingSurahChange) {
+    try { pendingReadCount = getReadVerseIds(pendingSurahChange.fromId).size; } catch { pendingReadCount = undefined; }
+  }
 
   if (showCalibration) {
     return (
@@ -777,6 +858,8 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
         showPanel={showPanel}
         sidebarFocused={focusedPanel === "sidebar"}
         panelFocused={focusedPanel === "panel"}
+        trackingReading={readingMode}
+        focusLabel={focusLabel}
         status={showPlaybackStatus ? (
           <PlaybackStatus
             value={playback.visual}
@@ -802,26 +885,7 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
             <box height="68%">
               <SurahList
                 onSelect={(id) => {
-                  const s = stateRef.current;
-                  if (s.readingMode && s.selectedSurahId !== id) {
-                    // Skip the dialog if this surah was already marked as read this session
-                    if (markedSurahsRef.current.has(s.selectedSurahId)) {
-                      setSelectedSurahId(id);
-                      setCurrentVerseId(1);
-                      try { setBookmarkedAyahs(getBookmarkedAyahs(id)); } catch { /* DB */ }
-                      return;
-                    }
-                    setPendingSurahChange({ fromId: s.selectedSurahId, toId: id });
-                    setShowMarkSurahDialog(true);
-                    return;
-                  }
-                  setSelectedSurahId(id);
-                  setCurrentVerseId(1);
-                  try {
-                    setBookmarkedAyahs(getBookmarkedAyahs(id));
-                  } catch {
-                    // DB may not be available
-                  }
+                  if (id !== stateRef.current.selectedSurahId) requestNavigate(id, 1);
                 }}
                 selectedId={selectedSurahId}
                 focused={focusedPanel === "sidebar" && sidebarSubFocus === "surahList"}
@@ -865,6 +929,15 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
           arabicWidth={arabicWidth}
           arabicFlow={arabicFlow}
           activeWordKey={playback.activeWordKey}
+          searchSelectedIndex={searchIndex}
+          onSearchResultSelect={(index) => {
+            const result = searchResults[index];
+            if (!result) return;
+            setSearchResults([]);
+            setSearchQuery("");
+            requestNavigate(result.surahId, result.verseId);
+          }}
+          onPaneFocus={(pane) => setFocusedPanel(pane)}
           onVerseSelect={(verseId) => {
             setCurrentVerseId(verseId);
           }}
@@ -892,12 +965,6 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
             showFlash("Keeping the local Arabic text view");
           }}
         />
-        <HelpDialog visible={showHelp} />
-        <CommandPalette
-          visible={showPalette}
-          commands={paletteCommands}
-          selectedIndex={paletteIndex}
-        />
         <ReflectionDialog
           visible={showReflectionDialog}
           verseRef={`${selectedSurahId}:${currentVerseId}`}
@@ -914,6 +981,8 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
         <MarkSurahDialog
           visible={showMarkSurahDialog}
           surahName={pendingSurahChange ? (getSurah(pendingSurahChange.fromId)?.transliteration ?? `Surah ${pendingSurahChange.fromId}`) : ""}
+          readCount={pendingSurahChange ? pendingReadCount : undefined}
+          totalVerses={pendingSurahChange ? getSurah(pendingSurahChange.fromId)?.totalVerses : undefined}
           onConfirm={() => {
             if (pendingSurahChange) {
               const surah = getSurah(pendingSurahChange.fromId);
@@ -922,20 +991,18 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
               }
               // Remember this surah was marked so we don't ask again (issue #5)
               markedSurahsRef.current.add(pendingSurahChange.fromId);
-              setSelectedSurahId(pendingSurahChange.toId);
-              setCurrentVerseId(1);
-              try { setBookmarkedAyahs(getBookmarkedAyahs(pendingSurahChange.toId)); } catch { /* DB */ }
+              navigateTo(pendingSurahChange.toId, pendingSurahChange.toVerse);
               if (showPanel) refreshPanelData();
               refreshCompletionData();
+              pendingSurahChange.after?.();
             }
             setShowMarkSurahDialog(false);
             setPendingSurahChange(null);
           }}
           onDismiss={() => {
             if (pendingSurahChange) {
-              setSelectedSurahId(pendingSurahChange.toId);
-              setCurrentVerseId(1);
-              try { setBookmarkedAyahs(getBookmarkedAyahs(pendingSurahChange.toId)); } catch { /* DB */ }
+              navigateTo(pendingSurahChange.toId, pendingSurahChange.toVerse);
+              pendingSurahChange.after?.();
             }
             setShowMarkSurahDialog(false);
             setPendingSurahChange(null);
@@ -961,15 +1028,34 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
           visible={showFuzzySearch}
           language={language}
           onSelect={(surahId, verseId) => {
-            setSelectedSurahId(surahId);
-            setCurrentVerseId(verseId);
             setShowFuzzySearch(false);
-            try { setBookmarkedAyahs(getBookmarkedAyahs(surahId)); } catch { /* DB */ }
-            refreshCompletionData();
+            requestNavigate(surahId, verseId);
           }}
           onDismiss={() => setShowFuzzySearch(false)}
         />
       </Layout>
+      <HelpDialog
+        visible={showHelp}
+        onClose={() => setShowHelp(false)}
+        footer={`Theme: ${theme.name} (${theme.era}) · j/k scroll · ? or Esc closes`}
+      />
+      <CommandPalette
+        visible={showPalette}
+        commands={filteredPaletteCommands}
+        selectedIndex={paletteIndex}
+        query={paletteQuery}
+      />
+      <GoToDialog
+        visible={showGoTo}
+        onSelect={(surahId, verseId) => {
+          setShowGoTo(false);
+          setSearchResults([]);
+          setSearchQuery("");
+          requestNavigate(surahId, verseId);
+          showFlash(`Went to ${surahId}:${verseId}`);
+        }}
+        onDismiss={() => setShowGoTo(false)}
+      />
       <ChoiceDialog
         visible={playbackDialog !== null}
         title={playbackDialog?.title ?? ""}
@@ -990,11 +1076,11 @@ function AppContent({ safeMode = false }: { readonly safeMode?: boolean }) {
   );
 };
 
-function App({ safeMode = false }: { readonly safeMode?: boolean }) {
+function App({ safeMode = false, initialVerseKey }: AppProps) {
   return (
     <ModeProvider>
       <ThemeProvider>
-        <AppContent safeMode={safeMode} />
+        <AppContent safeMode={safeMode} initialVerseKey={initialVerseKey} />
       </ThemeProvider>
     </ModeProvider>
   );

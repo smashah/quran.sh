@@ -11,10 +11,12 @@ import {
 
 const PREVIEW_TEXT = "بِسۡمِ ٱللَّهِ ٱلرَّحۡمَٰنِ ٱلرَّحِيمِ ٱللَّهُ لَآ إِلَٰهَ إِلَّا هُوَ ٱلۡحَيُّ ٱلۡقَيُّومُ لَا تَأۡخُذُهُۥ سِنَةٞ وَلَا نَوۡمٞ";
 
-/** Lines consumed per strategy item (label row + preview rows + gap). */
-const ITEM_HEIGHT = 5;
-/** Lines reserved for header + instructions + footer + padding. */
-const CHROME_LINES = 12;
+/**
+ * Lines reserved around the list: padding (4), header (2), three instruction
+ * blocks (5), key hint (2), more-above/below markers (2) and footer (2).
+ */
+const CHROME_LINES = 17;
+const RECOMMENDED_INDEX = 5; // reshaped_reversed
 
 interface RtlCalibrationDialogProps {
   onDone: (strategy: RtlStrategy) => void;
@@ -23,7 +25,7 @@ interface RtlCalibrationDialogProps {
 export function RtlCalibrationDialog(props: RtlCalibrationDialogProps) {
   const { theme } = useTheme();
   const { height: rows, width: cols } = useTerminalDimensions();
-  const [selectedIndex, setSelectedIndex] = useState(5); // default to reshaped_reversed
+  const [selectedIndex, setSelectedIndex] = useState(RECOMMENDED_INDEX);
   const windowStartRef = useRef(0);
 
   useKeyboard((key) => {
@@ -34,11 +36,16 @@ export function RtlCalibrationDialog(props: RtlCalibrationDialogProps) {
       setSelectedIndex((i) => Math.min(RTL_STRATEGIES.length - 1, i + 1));
     } else if (key.name === "return") {
       props.onDone(RTL_STRATEGIES[selectedIndex]!);
+    } else if (key.name === "escape") {
+      props.onDone(RTL_STRATEGIES[RECOMMENDED_INDEX]!);
     }
   });
 
+  // Each item is its label row plus however many lines the preview wraps to.
+  const previewWidth = Math.max(20, cols - 12);
+  const itemHeight = 1 + Math.max(1, applyStrategy(PREVIEW_TEXT, RTL_STRATEGIES[RECOMMENDED_INDEX]!, previewWidth).split("\n").length);
   // Stable window: only shift when selection escapes the visible range
-  const maxVisible = Math.max(3, Math.floor((rows - CHROME_LINES) / ITEM_HEIGHT));
+  const maxVisible = Math.max(3, Math.floor((rows - CHROME_LINES) / itemHeight));
   const total = RTL_STRATEGIES.length;
   let ws = windowStartRef.current;
   if (selectedIndex < ws) ws = selectedIndex;                             // scrolled above
@@ -71,22 +78,22 @@ export function RtlCalibrationDialog(props: RtlCalibrationDialogProps) {
 
       <box justifyContent="center">
         <text fg={theme.colors.muted}>
-          {"Terminals render Arabic text differently. Pick the option where"}
+          {"Terminals draw Arabic differently, so quran.sh asks once."}
         </text>
       </box>
       <box justifyContent="center" marginBottom={1}>
         <text fg={theme.colors.muted}>
-          {"the text below looks correct — connected and right-to-left."}
+          {"Pick the sample where the letters join up and the words read right-to-left."}
         </text>
       </box>
       <box justifyContent="center" marginBottom={1}>
         <text fg={theme.colors.muted}>
-          {"Choose the option where BOTH lines display correctly."}
+          {"If a sample wraps onto a second line, check that line too. Not sure? Keep the recommended one."}
         </text>
       </box>
       <box justifyContent="center" marginBottom={1}>
         <text fg={theme.colors.secondary}>
-          {"Use ↑/↓ to navigate, Enter to confirm"}
+          {"↑/↓ choose · Enter confirm · Esc use the recommended option"}
         </text>
       </box>
 
@@ -100,12 +107,12 @@ export function RtlCalibrationDialog(props: RtlCalibrationDialogProps) {
       )}
 
       {/* Strategy list (windowed) */}
-      <box flexDirection="column" flexGrow={1}>
+      <box flexDirection="column" flexGrow={1} overflow="hidden">
         {visibleItems.map((strategy) => {
           const idx = RTL_STRATEGIES.indexOf(strategy);
           const isSelected = idx === selectedIndex;
-          const label = RTL_STRATEGY_LABELS[strategy];
-          const preview = applyStrategy(PREVIEW_TEXT, strategy, Math.max(20, cols - 12));
+          const label = `${RTL_STRATEGY_LABELS[strategy]}${idx === RECOMMENDED_INDEX ? "  (recommended)" : ""}`;
+          const preview = applyStrategy(PREVIEW_TEXT, strategy, previewWidth);
           const marker = isSelected ? theme.ornaments.verseMarker : " ";
           const labelColor = isSelected
             ? theme.colors.highlight
@@ -121,6 +128,7 @@ export function RtlCalibrationDialog(props: RtlCalibrationDialogProps) {
             <box
               key={strategy}
               flexDirection="column"
+              flexShrink={0}
               paddingLeft={1}
               paddingRight={1}
               backgroundColor={bgColor}
@@ -168,7 +176,7 @@ export function RtlCalibrationDialog(props: RtlCalibrationDialogProps) {
       {/* Footer */}
       <box justifyContent="center" marginTop={1}>
         <text fg={theme.colors.muted}>
-          {`${selectedIndex + 1}/${RTL_STRATEGIES.length} — Re-run anytime from Command Palette (Ctrl+P)`}
+          {`${selectedIndex + 1}/${RTL_STRATEGIES.length} — Change it later: Ctrl+P, then "Re-calibrate Arabic"`}
         </text>
       </box>
     </box>

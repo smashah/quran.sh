@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 import ImmersiveApp from "../../src/tui/immersive-app.tsx";
@@ -25,7 +25,87 @@ function emptyStudyService(): StudyService {
   };
 }
 
+function emptyRuntime(): AnyRuntime {
+  return createFeatureRuntime({
+    study: { load: async () => ({ value: emptyStudyService(), dispose() {} }) },
+    recitation: { load: async () => ({ value: {}, dispose() {} }) },
+    recognition: { load: async () => ({ value: {}, dispose() {} }) },
+    "spatial-backdrop": { load: async () => ({ value: {}, dispose() {} }) },
+  }) as AnyRuntime;
+}
+
+// Keep the flow hermetic: the public Quran.com timing source is "unavailable",
+// so accepted playback falls through to the offline pack offer.
+const realFetch = globalThis.fetch;
+beforeEach(() => {
+  globalThis.fetch = (async () => { throw new Error("network disabled in tests"); }) as unknown as typeof fetch;
+});
+afterEach(() => {
+  globalThis.fetch = realFetch;
+});
+
 describe("immersive confirmation flow", () => {
+  test("Continue offline keeps the reader open and online features ask before connecting", async () => {
+    const runtime = emptyRuntime();
+    const setup = await testRender(
+      <FeatureRuntimeProvider runtime={runtime}><ImmersiveApp /></FeatureRuntimeProvider>,
+      { width: 100, height: 30 },
+    );
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("[C] Continue offline");
+
+    await act(async () => { setup.mockInput.pressEscape(); await new Promise((resolve) => setTimeout(resolve, 20)); });
+    await setup.renderOnce();
+    const offline = setup.captureCharFrame();
+    expect(offline).not.toContain("Online sources for immersive mode");
+    expect(offline).toContain("In the name of Allah");
+    expect(offline).toContain("OFFLINE");
+
+    await act(async () => { setup.mockInput.pressKey("w"); await new Promise((resolve) => setTimeout(resolve, 20)); });
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Go online for tafsir and study?");
+
+    await act(async () => { setup.mockInput.pressKey("c"); await new Promise((resolve) => setTimeout(resolve, 20)); });
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).not.toContain("Go online for tafsir and study?");
+
+    await act(async () => { setup.mockInput.pressKey("?"); await new Promise((resolve) => setTimeout(resolve, 20)); });
+    await setup.renderOnce();
+    const help = setup.captureCharFrame();
+    expect(help).toContain("Immersive reader keys");
+    expect(help).toContain("Memorise");
+
+    await act(async () => { setup.mockInput.pressEscape(); await new Promise((resolve) => setTimeout(resolve, 20)); });
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).not.toContain("Immersive reader keys");
+
+    act(() => setup.renderer.destroy());
+    await runtime.shutdown();
+  });
+
+  test("Memorise hides the next ayah until Space reveals it", async () => {
+    const runtime = emptyRuntime();
+    const setup = await testRender(
+      <FeatureRuntimeProvider runtime={runtime}><ImmersiveApp initialVerseKey="1:1" /></FeatureRuntimeProvider>,
+      { width: 100, height: 30 },
+    );
+    await setup.renderOnce();
+    await act(async () => { setup.mockInput.pressEscape(); await new Promise((resolve) => setTimeout(resolve, 20)); });
+    await act(async () => { setup.mockInput.pressKey("4"); await new Promise((resolve) => setTimeout(resolve, 20)); });
+    await setup.renderOnce();
+    const hidden = setup.captureCharFrame();
+    expect(hidden).toContain("Memorise view");
+    expect(hidden).toContain("NEXT · 1:2");
+    expect(hidden).toContain("Space reveals it");
+
+    await act(async () => { setup.mockInput.pressKey(" "); await new Promise((resolve) => setTimeout(resolve, 20)); });
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).not.toContain("Space reveals it");
+
+    act(() => setup.renderer.destroy());
+    await runtime.shutdown();
+  });
+
   test("accepted immersive sources lead to the pack modal and Escape returns to the Quran reader", async () => {
     const runtime = createFeatureRuntime({
       study: { load: async () => ({ value: emptyStudyService(), dispose() {} }) },
@@ -34,7 +114,7 @@ describe("immersive confirmation flow", () => {
       "spatial-backdrop": { load: async () => ({ value: {}, dispose() {} }) },
     }) as AnyRuntime;
     const setup = await testRender(
-      <FeatureRuntimeProvider runtime={runtime}><ImmersiveApp /></FeatureRuntimeProvider>,
+      <FeatureRuntimeProvider runtime={runtime}><ImmersiveApp initialVerseKey="1:1" /></FeatureRuntimeProvider>,
       { width: 100, height: 30 },
     );
     await setup.renderOnce();

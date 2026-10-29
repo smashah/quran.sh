@@ -1,36 +1,52 @@
 #!/usr/bin/env bun
 
 const TOTAL_SURAHS = 114;
+const LANGUAGE_CODES = "bn en es fr id ru sv tr ur zh";
 
 function showUsage(): void {
   console.log(`quran.sh — Read the Quran from your terminal
 
 Usage:
-  quran.sh [command] [options]
+  quran [command] [options]        (run without installing: bunx quran.sh)
+
+Readers (interactive):
+  quran                    Dashboard: surah list, bookmarks, cues, reflections, reading stats
+  quran immersive [ref]    One ayah at a time with tafsir, hadith, recitation and 3D views
+  quran stream [ref]       Minimal reader; finished ayat stay in your terminal scrollback
+  quran safe               Dashboard with every optional online or heavy feature turned off
+                           (quran classic is another name for the dashboard)
+
+  All three readers share your position, bookmarks and reading history.
+  Press ? inside any reader for its keys.
 
 Commands:
-  (none)           Launch the interactive dashboard reader
-  read   <ref>     Read a surah or verse
-  log    <ref>     Log a surah or verse as read
-  search <query>   Search verse translations
-  streak           Show reading stats and streaks
-  resources [...]  Install or manage attributed optional content packs
-  immersive        Launch the experimental focused reader
-  stream           Read with completed ayat in terminal scrollback
-  safe              Launch the dashboard with optional features disabled
-  doctor            Inspect capabilities, packs, caches, and licenses (--gpu probes WebGPU)
-  models [...]      Install, verify, or remove optional Tilawa assets
+  read   <ref> [options]   Print a surah or verse
+  search <query> [options] Search translations and Arabic text
+  log    <ref>             Log a surah or verse as read
+  streak                   Show reading streaks
+  resources [...]          Install or manage attributed optional content packs
+  models [...]             Install, verify, or remove optional Tilawa assets
+  doctor [--gpu]           Inspect capabilities, packs, caches, and licenses
+  help                     Show this help
 
-Reference formats:
-  1                Full surah by number (1-${TOTAL_SURAHS})
-  1:1              Single verse (surah:verse)
-  al-fatihah       Full surah by name
+Options for read and search:
+  -l, --lang <code>        Translation language: ${LANGUAGE_CODES} (default: en)
+  -a, --arabic             Include the Arabic text (read)
+  -n, --numbers            Prefix every verse with its reference (read)
+
+References:
+  2                        Surah by number (1-${TOTAL_SURAHS})
+  2:255                    Single verse (surah:verse)
+  al-baqarah               Surah by name; spelling is forgiving (baqarah, Al-Baqara, the cow)
+  baqarah 255              Surah name plus verse
 
 Examples:
-  quran                    Launch TUI
+  quran                    Launch the dashboard
   quran read 1             Al-Fatihah (full surah)
-  quran read 1:1           First verse of Al-Fatihah
+  quran read 1:1 --arabic  First verse with its Arabic text
+  quran read yasin -l ur   Ya-Sin in Urdu
   quran search merciful    Search for "merciful"
+  quran immersive 2:255    Open the immersive reader at Ayat al-Kursi
   quran streak             Show current streak`);
 }
 
@@ -44,31 +60,53 @@ async function main(): Promise<number | undefined> {
     return;
   }
 
-  if (command === "--help" || command === "-h") {
+  if (command === "--help" || command === "-h" || command === "help") {
     showUsage();
     return 0;
   }
 
-  if (command === "streak") {
-    const { runStreak } = await import("./cli/commands.ts");
-    return runStreak();
+  if (command === "immersive" || command === "classic" || command === "stream" || command === "safe") {
+    const experience = command === "classic" || command === "safe" ? "reader" : command;
+    const ref = args.slice(1).join(" ").trim();
+    let initialVerseKey: `${number}:${number}` | undefined;
+    if (ref) {
+      if (experience === "reader") {
+        console.error(`Error: "quran ${command}" doesn't take a reference. Try "quran immersive ${ref}" or "quran read ${ref}".`);
+        return 1;
+      }
+      const { parseQuranReference } = await import("./data/reference.ts");
+      const parsed = parseQuranReference(ref);
+      if (!parsed.ok) {
+        console.error(`Error: ${parsed.message}`);
+        return 1;
+      }
+      initialVerseKey = `${parsed.surahId}:${parsed.verseId ?? 1}`;
+    }
+    const { launchTui } = await import("./tui/launch.ts");
+    await launchTui({ experience, safeMode: command === "safe", initialVerseKey });
+    return;
   }
 
-  if (command === "search") {
-    const { runSearch } = await import("./cli/commands.ts");
-    return runSearch(args.slice(1).join(" "));
+  if (command === "streak" || command === "search" || command === "read" || command === "log") {
+    const { parseCommandOptions, runReferenceCommand, runSearch, runStreak } = await import("./cli/commands.ts");
+    const parsed = parseCommandOptions(command, args.slice(1));
+    if (!parsed.ok) {
+      console.error(`Error: ${parsed.message}`);
+      return 1;
+    }
+    if (command === "streak") return runStreak();
+    if (command === "search") return runSearch(parsed.positional.join(" "), parsed.options);
+    const ref = parsed.positional.join(" ").trim();
+    if (!ref) {
+      console.error(`Error: Missing reference. Usage: quran ${command} <ref>   (for example: quran ${command} 2:255)`);
+      return 1;
+    }
+    return runReferenceCommand(command, ref, parsed.options);
   }
 
   if (command === "resources") {
     const { runResourceCommand } = await import("./features/resources/cli.ts");
     return runResourceCommand(args.slice(1));
-  }
-
-  if (command === "immersive" || command === "classic" || command === "stream" || command === "safe") {
-    const { launchTui } = await import("./tui/launch.ts");
-    const experience = command === "classic" || command === "safe" ? "reader" : command;
-    await launchTui({ experience, safeMode: command === "safe" });
-    return;
   }
 
   if (command === "doctor") {
@@ -81,19 +119,8 @@ async function main(): Promise<number | undefined> {
     return runModelCommand(args.slice(1));
   }
 
-  if (command !== "read" && command !== "log") {
-    console.error(`Error: Unknown command "${command}". Run with --help for usage.`);
-    return 1;
-  }
-
-  const ref = args[1];
-  if (!ref) {
-    console.error(`Error: Missing reference. Usage: quran.sh ${command} <ref>`);
-    return 1;
-  }
-
-  const { runReferenceCommand } = await import("./cli/commands.ts");
-  return runReferenceCommand(command, ref);
+  console.error(`Error: Unknown command "${command}". Run "quran help" for usage.`);
+  return 1;
 }
 
 main()

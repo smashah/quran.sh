@@ -38,6 +38,11 @@ export interface ReaderProps {
   arabicFlow?: ArabicFlow;
   activeWordKey?: WordKey | null;
   onVerseSelect?: (verseId: number) => void;
+  /** Highlighted search result; arrows/j/k move it and Enter opens it. */
+  searchSelectedIndex?: number;
+  onSearchResultSelect?: (index: number) => void;
+  /** Clicking a pane focuses it (Tab moves between whole areas). */
+  onPaneFocus?: (pane: "arabic" | "translation" | "transliteration") => void;
 }
 
 export function Reader(props: ReaderProps) {
@@ -85,6 +90,21 @@ export function Reader(props: ReaderProps) {
 
   // Refs for non-focused pane scroll sync
   const scrollRefs = useRef<Record<string, any>>({});
+  const searchScrollRef = useRef<any>(null);
+  const searchSelectedIndex = props.searchSelectedIndex ?? 0;
+
+  // Keep the highlighted search result in view.
+  useEffect(() => {
+    const ref = searchScrollRef.current;
+    if (!ref || typeof ref.getChildren !== "function") return;
+    const target = ref.getChildren()[searchSelectedIndex];
+    if (!target) return;
+    const { top, height } = target.getLayout();
+    const viewport = ref.viewport?.height ?? ref.height ?? 0;
+    const scrollTop = ref.scrollTop ?? 0;
+    if (top < scrollTop) ref.scrollTo(top);
+    else if (viewport > 0 && top + height > scrollTop + viewport) ref.scrollTo(top + height - viewport);
+  }, [searchSelectedIndex, props.searchResults]);
 
   // Sync all panes to currentVerseId
   useEffect(() => {
@@ -97,7 +117,7 @@ export function Reader(props: ReaderProps) {
           const children = ref.getChildren();
           const target = children[props.currentVerseId! - 1];
           if (target) {
-            const y = target.getLayoutNode().getComputedTop();
+            const y = target.getLayout().top;
             ref.scrollTo(y);
           }
         }
@@ -292,36 +312,51 @@ export function Reader(props: ReaderProps) {
   };
 
   const renderSearchResults = () => (
-    <scrollbox
+    <box
       width="100%"
       height="100%"
-      focusable={true}
-      focused={isAnyReaderFocused}
-      scrollY={true}
       flexDirection="column"
-      overflow="hidden"
       borderStyle={theme.borderStyle}
       borderColor={theme.colors.border}
       backgroundColor={theme.colors.background}
-      viewportCulling={true}
     >
-      <box paddingBottom={1}>
+      <box flexShrink={0} paddingBottom={1} flexDirection="column">
         <text fg={theme.colors.header} attributes={TextAttributes.BOLD}>
           {`Found ${props.searchResults!.length} result(s) for "${props.searchQuery}"`}
         </text>
+        <text fg={theme.colors.muted}>{"↑/↓ or j/k choose · Enter opens the verse · Esc returns to the surah"}</text>
       </box>
-      <box paddingBottom={1}>
-        <text fg={theme.colors.muted}>{"Press ESC to return to surah view"}</text>
-      </box>
-      {props.searchResults!.map((r) => (
-        <box key={r.reference} flexDirection="column" paddingBottom={1}>
-          <text fg={theme.colors.verseNum} attributes={TextAttributes.BOLD}>
-            {`  [${r.reference}]`}
-          </text>
-          <text fg={theme.colors.translation}>{r.translation}</text>
-        </box>
-      ))}
-    </scrollbox>
+      <scrollbox
+        ref={searchScrollRef}
+        width="100%"
+        flexGrow={1}
+        focusable={true}
+        focused={isAnyReaderFocused}
+        scrollY={true}
+        flexDirection="column"
+        overflow="hidden"
+        backgroundColor={theme.colors.background}
+        viewportCulling={true}
+      >
+        {props.searchResults!.map((r, index) => {
+          const selected = index === searchSelectedIndex;
+          return (
+            <box
+              key={r.reference}
+              flexDirection="column"
+              paddingBottom={1}
+              backgroundColor={selected ? theme.colors.statusBar : theme.colors.background}
+              onMouseDown={() => props.onSearchResultSelect?.(index)}
+            >
+              <text fg={selected ? theme.colors.highlight : theme.colors.verseNum} attributes={TextAttributes.BOLD}>
+                {`${selected ? theme.ornaments.verseMarker : " "} [${r.reference}]${r.surahTransliteration ? ` ${r.surahTransliteration}` : ""}`}
+              </text>
+              <text fg={theme.colors.translation}>{r.translation}</text>
+            </box>
+          );
+        })}
+      </scrollbox>
+    </box>
   );
 
   return (
@@ -362,6 +397,7 @@ export function Reader(props: ReaderProps) {
                   focusedBorderColor={theme.colors.borderFocused}
                   title={paneTitle(surahLabel, isArabicFocused, searchTitle())}
                   titleAlignment="left"
+                  onMouseDown={() => props.onPaneFocus?.("arabic")}
                 >
                   {showArabicImage ? (
                     <Suspense fallback={<text fg={theme.colors.muted}>Activating image viewer…</text>}>
@@ -389,6 +425,7 @@ export function Reader(props: ReaderProps) {
                       focusedBorderColor={theme.colors.borderFocused}
                       title={paneTitle("Translation", isTranslationFocused, `[${(props.language ?? "en").toUpperCase()}]`)}
                       titleAlignment="left"
+                      onMouseDown={() => props.onPaneFocus?.("translation")}
                     >
                       {renderVerseList("translation", isTranslationFocused)}
                     </box>
@@ -404,6 +441,7 @@ export function Reader(props: ReaderProps) {
                       focusedBorderColor={theme.colors.borderFocused}
                       title={paneTitle("Transliteration", isTransliterationFocused)}
                       titleAlignment="left"
+                      onMouseDown={() => props.onPaneFocus?.("transliteration")}
                     >
                       {renderVerseList("transliteration", isTransliterationFocused)}
                     </box>

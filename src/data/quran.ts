@@ -153,12 +153,41 @@ function getTransliteration(chapterId: number, verseId: number): string | undefi
  * Loaded lazily from chapters/index.json (no verse data).
  */
 let _indexByName: Map<string, number> | null = null;
+let _indexByLooseName: Map<string, number> | null = null;
+
+const SURAH_ARTICLE = /^(?:al|an|ar|as|at|ad|adh|ash|az|ath|the)(?:[-\s]+)/u;
+
+/**
+ * Reduce a surah name to a forgiving comparison key so "Al-Fatihah",
+ * "al fatiha" and "Fatiha" all match: drop the article, apostrophes,
+ * punctuation, doubled letters, and a trailing "h".
+ */
+export function normalizeSurahName(name: string): string {
+  return name
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/gu, "")
+    .toLowerCase()
+    .trim()
+    .replace(/['‘’`ʿʾ"]/gu, "")
+    .replace(SURAH_ARTICLE, "")
+    .replace(/[^\p{L}\p{N}]+/gu, "")
+    .replace(/(\p{L})\1+/gu, "$1")
+    .replace(/h$/u, "");
+}
 
 function loadChapterIndex(): void {
   if (_indexByName !== null) return;
   _indexByName = new Map<string, number>();
+  _indexByLooseName = new Map<string, number>();
   for (const entry of DATASETS.en!) {
     _indexByName.set(entry.transliteration.toLowerCase(), entry.id);
+    _indexByName.set(entry.name, entry.id);
+    _indexByLooseName.set(normalizeSurahName(entry.transliteration), entry.id);
+  }
+  // English meanings ("the cow") only fill keys no transliteration claimed.
+  for (const entry of DATASETS.en!) {
+    const key = normalizeSurahName(entry.translation);
+    if (key && !_indexByLooseName.has(key)) _indexByLooseName.set(key, entry.id);
   }
 }
 
@@ -180,7 +209,53 @@ function loadChapter(language: string, id: number): RawChapter | null {
  */
 function resolveNameToId(name: string): number | null {
   loadChapterIndex();
-  return _indexByName!.get(name.trim().toLowerCase()) ?? null;
+  const exact = _indexByName!.get(name.trim().toLowerCase()) ?? _indexByName!.get(name.trim());
+  if (exact !== undefined) return exact;
+  const loose = normalizeSurahName(name);
+  return loose ? _indexByLooseName!.get(loose) ?? null : null;
+}
+
+/** Resolve a surah name with forgiving spelling, or null when nothing matches. */
+export function findSurahId(name: string): number | null {
+  if (name.trim().length === 0) return null;
+  return resolveNameToId(name);
+}
+
+function editDistance(left: string, right: string): number {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let row = 1; row <= left.length; row += 1) {
+    let diagonal = previous[0]!;
+    previous[0] = row;
+    for (let column = 1; column <= right.length; column += 1) {
+      const above = previous[column]!;
+      previous[column] = Math.min(
+        above + 1,
+        previous[column - 1]! + 1,
+        diagonal + (left[row - 1] === right[column - 1] ? 0 : 1),
+      );
+      diagonal = above;
+    }
+  }
+  return previous[right.length]!;
+}
+
+/** Suggest close surah names for a query that did not resolve. */
+export function suggestSurahs(name: string, limit = 3): Array<{ id: number; transliteration: string }> {
+  const query = normalizeSurahName(name);
+  if (query.length < 3) return [];
+  const scored = DATASETS.en!.map((entry) => {
+    const key = normalizeSurahName(entry.transliteration);
+    const meaning = normalizeSurahName(entry.translation);
+    const contains = key.includes(query) || meaning.includes(query);
+    const distance = Math.min(editDistance(query, key), editDistance(query, meaning));
+    return { id: entry.id, transliteration: entry.transliteration, score: contains ? 0 : distance };
+  });
+  const threshold = Math.max(1, Math.floor(query.length / 3));
+  const containing = scored.filter((entry) => entry.score === 0);
+  return (containing.length > 0 ? containing : scored.filter((entry) => entry.score <= threshold))
+    .sort((left, right) => left.score - right.score || left.id - right.id)
+    .slice(0, limit)
+    .map(({ id, transliteration }) => ({ id, transliteration }));
 }
 
 // ---------------------------------------------------------------------------
