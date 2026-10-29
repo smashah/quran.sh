@@ -58,6 +58,8 @@ function normalizedEvent(message: WorkerOutbound): RecognitionEvent[] {
 
 export async function createTilawaRecognizer(assets: TilawaAssetDirectory): Promise<TilawaRecognizer> {
   const packageName: string = "onnxruntime-node";
+  // onnxruntime-node 1.31+ enables Microsoft telemetry by default; quran.sh stays offline-first.
+  process.env["ORT_DISABLE_TELEMETRY"] ??= "1";
   let onnx: OnnxModule;
   try {
     onnx = await import(packageName) as unknown as OnnxModule;

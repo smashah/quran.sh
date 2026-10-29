@@ -304,7 +304,7 @@ function buildLine(
       if (layer.glyph.path.commands.length === 0) continue;
       const path = new THREE.ShapePath();
       appendPath(THREE, path, layer.glyph.path, cursorX + position.xOffset, position.yOffset);
-      const shapes = path.toShapes(false);
+      const shapes = path.toShapes();
       if (shapes.length === 0) continue;
       const geometry = extruded
         ? new THREE.ExtrudeGeometry(shapes, { depth: 48, bevelEnabled: true, bevelSize: 7, bevelThickness: 7, bevelSegments: 2, curveSegments: 5 })

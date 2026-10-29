@@ -99,11 +99,7 @@ export function Reader(props: ReaderProps) {
     if (!ref || typeof ref.getChildren !== "function") return;
     const target = ref.getChildren()[searchSelectedIndex];
     if (!target) return;
-    const { top, height } = target.getLayout();
-    const viewport = ref.viewport?.height ?? ref.height ?? 0;
-    const scrollTop = ref.scrollTop ?? 0;
-    if (top < scrollTop) ref.scrollTo(top);
-    else if (viewport > 0 && top + height > scrollTop + viewport) ref.scrollTo(top + height - viewport);
+    ref.scrollChildIntoView(target, { align: "nearest" });
   }, [searchSelectedIndex, props.searchResults]);
 
   // Sync all panes to currentVerseId
@@ -117,8 +113,7 @@ export function Reader(props: ReaderProps) {
           const children = ref.getChildren();
           const target = children[props.currentVerseId! - 1];
           if (target) {
-            const y = target.getLayout().top;
-            ref.scrollTo(y);
+            ref.scrollChildIntoView(target, { align: "start" });
           }
         }
       });

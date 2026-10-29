@@ -313,7 +313,7 @@ under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); see
 
 - Built with [Bun](https://bun.sh)
 - UI powered by [OpenTUI](https://github.com/anomalyco/opentui)
-- Optional spatial cells powered by the released [OpenTUI Three](https://github.com/anomalyco/opentui/tree/v0.6.6/packages/three)
+- Optional spatial cells powered by the released [OpenTUI Three](https://github.com/anomalyco/opentui/tree/v0.8.0/packages/three)
 - Optional local recitation recognition powered by [Tilawa](https://github.com/yazinsai/tilawa)
 - Optional content-pack integration for [Quranic Universal Library](https://qul.tarteel.ai/resources)
 - Optional online tafsir and ayah images from [Al Quran Cloud / Islamic Network](https://alquran.cloud/api)

@@ -4,6 +4,15 @@ All notable changes to quran.sh are documented here.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-29
+
+### Dependencies
+
+- Updated every dependency to its latest release: OpenTUI (`@opentui/core`, `@opentui/react`, `@opentui/three`) 0.8.0, effect 4.1.0, react 19.3.1, three 0.186.1 with @types/three 0.186.0, @types/react 19.3.0, @types/bun 1.4.4, and onnxruntime-node 1.31.1.
+- Search results and verse sync use OpenTUI 0.8's `scrollChildIntoView`, which re-applies after layout instead of computing offsets by hand.
+- The three.js glyph outlines use r186's containment-based `ShapePath.toShapes()`.
+- onnxruntime-node 1.31 enables telemetry by default, so quran.sh sets `ORT_DISABLE_TELEMETRY=1` before loading it unless you set it yourself.
+
 ## [0.10.0] - 2026-10-29
 
 ### Added
